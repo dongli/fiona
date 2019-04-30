@@ -39,9 +39,6 @@ else ()
   endif ()
 endif ()
 
-add_subdirectory(lib/container)
-include_directories(${CMAKE_BINARY_DIR}/fortran_container)
-
 set(sources
   src/string_mod.F90
   src/log_mod.F90
@@ -49,4 +46,9 @@ set(sources
 )
 
 add_library(fiona ${sources})
-target_link_libraries(fiona netcdf netcdff fortran_container)
+
+if (EXISTS lib/container/CMakeLists.txt)
+  add_subdirectory(lib/container)
+  include_directories(${CMAKE_BINARY_DIR}/fortran_container)
+  target_link_libraries(fiona netcdf netcdff fortran_container)
+endif ()

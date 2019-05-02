@@ -2,6 +2,28 @@
 
 FIONA stands for Fortran IO Netcdf Assembly, which encapsulates netCDF library for easy use.
 
+# Dependencies
+
+- NetCDF
+
+  You need to install netCDF by yourself and by any means (e.g. [STARMAN](https://github.com/dongli/starman))
+
+- [fortran-container](https://github.com/dongli/fortran-container)
+
+  It can be added to your project as another submodule.
+  
+```
+$ git submodule add https://github.com/dongli/fortran-container lib/container
+```
+
+In your `CMakeLists.txt`:
+```cmake
+add_subdirectory(lib/container)
+include_directories(${CMAKE_BINARY_DIR}/fortran_container) # Not sure why we need this.
+...
+target_link_libraries(... fortran_container)
+```
+
 # Usage
 
 ## Step 1
@@ -9,7 +31,7 @@ FIONA stands for Fortran IO Netcdf Assembly, which encapsulates netCDF library f
 Add FIONA as a submodule in you git project:
 
 ```
-git submodule add https://github.com/dongli/fiona lib/fiona
+$ git submodule add https://github.com/dongli/fiona lib/fiona
 ```
 
 ## Step 2

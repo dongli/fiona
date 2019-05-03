@@ -147,7 +147,7 @@ contains
 
   subroutine io_create_dataset(name, desc, file_prefix, file_path, mode, period, time_step_size, frames_per_file)
 
-    character(*), intent(in), optional :: name
+    character(*), intent(in) :: name
     character(*), intent(in), optional :: desc
     character(*), intent(in), optional :: file_prefix
     character(*), intent(in), optional :: file_path
@@ -156,7 +156,7 @@ contains
     real, intent(in), optional :: time_step_size
     character(*), intent(in), optional :: frames_per_file
 
-    character(30) name_, period_, time_value, time_units
+    character(30) period_, time_value, time_units
     character(10) mode_
     character(256) desc_, file_prefix_, file_path_
     type(dataset_type) dataset
@@ -164,11 +164,6 @@ contains
     integer i
     real value
 
-    if (present(name)) then
-      name_ = name
-    else
-      name_ = 'hist0'
-    end if
     if (present(desc)) then
       desc_ = desc
     else
@@ -207,22 +202,19 @@ contains
       end if
     end if
 
-    if (datasets%hashed(name_)) then
-      call log_error('Already created dataset ' // trim(name_) // '!')
+    if (datasets%hashed(name)) then
+      call log_error('Already created dataset ' // trim(name) // '!')
     end if
 
-    dataset%name = name_
+    dataset%name = name
     dataset%desc = desc_
     dataset%atts = hash_table()
     dataset%dims = hash_table()
     dataset%vars = hash_table()
     if (file_prefix_ /= '' .and. file_path_ == '') then
-      dataset%file_prefix = file_prefix_
+      dataset%file_prefix = trim(file_prefix_) // '.' // trim(name)
     else if (file_prefix_ == '' .and. file_path_ /= '') then
       dataset%file_path = file_path_
-    end if
-    if (name_(1:4) == 'hist') then
-      dataset%file_prefix = trim(dataset%file_prefix) // '.' // trim(string_delete(name_, 'ist'))
     end if
     dataset%mode = mode_
 
@@ -281,28 +273,24 @@ contains
 
   end subroutine io_create_dataset
 
-  subroutine io_add_att(name, value, dataset_name)
+  subroutine io_add_att(dataset_name, name, value)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: value
-    character(*), intent(in), optional :: dataset_name
 
     type(dataset_type), pointer :: dataset
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
 
     call dataset%atts%insert(name, value)
 
   end subroutine io_add_att
 
-  subroutine io_add_dim(name, dataset_name, long_name, units, size, add_var)
+  subroutine io_add_dim(dataset_name, name, long_name, units, size, add_var)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
-    character(*), intent(in), optional :: dataset_name
     character(*), intent(in), optional :: long_name
     character(*), intent(in), optional :: units
     integer, intent(in), optional :: size
@@ -311,11 +299,7 @@ contains
     type(dataset_type), pointer :: dataset
     type(dim_type) dim
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
 
     if (dataset%dims%hashed(name)) then
       call log_error('Already added dimension ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!')
@@ -356,15 +340,15 @@ contains
           dim%units = units
         end select
       end if
-      call io_add_var(name, dataset_name, long_name=dim%long_name, units=dim%units, dim_names=[name], data_type='real(8)')
+      call io_add_var(dataset_name, name, long_name=dim%long_name, units=dim%units, dim_names=[name], data_type='real(8)')
     end if
 
   end subroutine io_add_dim
 
-  subroutine io_add_var(name, dataset_name, long_name, units, data_type, dim_names)
+  subroutine io_add_var(dataset_name, name, long_name, units, data_type, dim_names)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
-    character(*), intent(in), optional :: dataset_name
     character(*), intent(in) :: long_name
     character(*), intent(in) :: units
     character(*), intent(in), optional :: data_type
@@ -378,11 +362,7 @@ contains
     logical found
     real real
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
 
     if (dataset%vars%hashed(name)) then
       call log_error('Already added variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!')
@@ -438,10 +418,10 @@ contains
 
   end subroutine io_add_var
 
-  subroutine io_start_output(time_in_seconds, dataset_name, tag)
+  subroutine io_start_output(dataset_name, time_in_seconds, tag)
 
+    character(*), intent(in) :: dataset_name
     real(8), intent(in), optional :: time_in_seconds
-    character(*), intent(in), optional :: dataset_name
     character(*), intent(in), optional :: tag
 
     character(256) file_path
@@ -451,11 +431,7 @@ contains
     type(var_type), pointer :: var
     integer i, ierr, dimids(10)
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
 
     if (present(tag)) then
       if (dataset%file_path /= 'N/A') then
@@ -550,21 +526,17 @@ contains
 
   end subroutine io_start_output
 
-  subroutine io_output_0d(name, value, dataset_name)
+  subroutine io_output_0d(dataset_name, name, value)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: value
-    character(*), intent(in), optional :: dataset_name
 
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
     integer ierr
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
     select type (value)
@@ -581,11 +553,11 @@ contains
 
   end subroutine io_output_0d
 
-  subroutine io_output_1d(name, array, dataset_name)
+  subroutine io_output_1d(dataset_name, name, array)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: array(:)
-    character(*), intent(in), optional :: dataset_name
 
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
@@ -593,11 +565,7 @@ contains
     integer i, ierr
     integer start(2), count(2)
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
     if (size(var%dims) == 1) then
@@ -633,11 +601,11 @@ contains
 
   end subroutine io_output_1d
 
-  subroutine io_output_2d(name, array, dataset_name)
+  subroutine io_output_2d(dataset_name, name, array)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: array(:,:)
-    character(*), intent(in), optional :: dataset_name
 
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
@@ -645,11 +613,7 @@ contains
     integer i, ierr
     integer start(3), count(3)
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
     lb1 = lbound(array, 1)
@@ -681,11 +645,11 @@ contains
 
   end subroutine io_output_2d
 
-  subroutine io_output_3d(name, array, dataset_name)
+  subroutine io_output_3d(dataset_name, name, array)
 
-    character(*), intent(in)           :: name
-    class(*)    , intent(in)           :: array(:,:,:)
-    character(*), intent(in), optional :: dataset_name
+    character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: name
+    class(*), intent(in) :: array(:,:,:)
 
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
@@ -693,11 +657,7 @@ contains
     integer i, ierr
     integer start(3), count(3)
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
     lb1 = lbound(array, 1)
@@ -731,16 +691,12 @@ contains
 
   subroutine io_end_output(dataset_name)
 
-    character(*), intent(in), optional :: dataset_name
+    character(*), intent(in) :: dataset_name
 
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='output')
-    else
-      dataset => get_dataset(mode='output')
-    end if
+    dataset => get_dataset(dataset_name, mode='output')
 
     ierr = NF90_CLOSE(dataset%id)
     if (ierr /= NF90_NOERR) then
@@ -751,16 +707,12 @@ contains
 
   subroutine io_start_input(dataset_name)
 
-    character(*), intent(in), optional :: dataset_name
+    character(*), intent(in) :: dataset_name
 
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='input')
-    else
-      dataset => get_dataset(mode='input')
-    end if
+    dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE, dataset%id)
     if (ierr /= NF90_NOERR) then
@@ -769,10 +721,10 @@ contains
 
   end subroutine io_start_input
 
-  subroutine io_get_dim(name, dataset_name, size)
+  subroutine io_get_dim(dataset_name, name, size)
 
-    character(*), intent(in) :: name
     character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: name
     integer, intent(out), optional :: size
 
     type(dataset_type), pointer :: dataset
@@ -780,7 +732,7 @@ contains
     integer ierr, dimid
 
     ! TODO: Try to refactor mode usage in dataset key.
-    dataset => get_dataset(name=dataset_name, mode='input')
+    dataset => get_dataset(dataset_name, mode='input')
 
     if (dataset%dims%hashed(name)) then
       dim => dataset%get_dim(name)
@@ -811,21 +763,17 @@ contains
 
   end subroutine io_get_dim
 
-  function io_get_att_str(name, dataset_name) result(res)
+  function io_get_att_str(dataset_name, name) result(res)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
-    character(*), intent(in), optional :: dataset_name
     character(:), allocatable :: res
 
     type(dataset_type), pointer :: dataset
     character(256) att
     integer ierr
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='input')
-    else
-      dataset => get_dataset(mode='input')
-    end if
+    dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, att)
     if (ierr /= NF90_NOERR) then
@@ -835,21 +783,17 @@ contains
 
   end function io_get_att_str
 
-  subroutine io_input_1d(name, array, dataset_name)
+  subroutine io_input_1d(dataset_name, name, array)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(out) :: array(:)
-    character(*), intent(in), optional :: dataset_name
 
     type(dataset_type), pointer :: dataset
     integer lb, ub
     integer ierr, varid
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='input')
-    else
-      dataset => get_dataset(mode='input')
-    end if
+    dataset => get_dataset(dataset_name, mode='input')
 
     lb = lbound(array, 1)
     ub = ubound(array, 1)
@@ -872,21 +816,17 @@ contains
 
   end subroutine io_input_1d
 
-  subroutine io_input_2d(name, array, dataset_name)
+  subroutine io_input_2d(dataset_name, name, array)
 
+    character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(out) :: array(:,:)
-    character(*), intent(in), optional :: dataset_name
 
     type(dataset_type), pointer :: dataset
     integer lb1, ub1, lb2, ub2
     integer ierr, varid
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='input')
-    else
-      dataset => get_dataset(mode='input')
-    end if
+    dataset => get_dataset(dataset_name, mode='input')
 
     lb1 = lbound(array, 1)
     ub1 = ubound(array, 1)
@@ -913,16 +853,12 @@ contains
 
   subroutine io_end_input(dataset_name)
 
-    character(*), intent(in), optional :: dataset_name
+    character(*), intent(in) :: dataset_name
 
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    if (present(dataset_name)) then
-      dataset => get_dataset(name=dataset_name, mode='input')
-    else
-      dataset => get_dataset(mode='input')
-    end if
+    dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_CLOSE(dataset%id)
 
@@ -930,25 +866,22 @@ contains
 
   function get_dataset(name, mode) result(res)
 
-    character(*), intent(in), optional :: name
+    character(*), intent(in) :: name
     character(*), intent(in), optional :: mode
     type(dataset_type), pointer :: res
 
-    character(30) name_, mode_
+    character(30) mode_
 
-    if (present(name)) then
-      name_ = name
-    else
-      name_ = 'hist0'
-    end if
     if (present(mode)) then
       mode_ = mode
     else
       mode_ = 'output'
     end if
-    select type (value => datasets%value(trim(name_) // '.' // trim(mode_)))
+    select type (value => datasets%value(trim(name) // '.' // trim(mode_)))
     type is (dataset_type)
       res => value
+    class default
+      call log_error('Failed to get dataset ' // trim(name) // '.' // trim(mode_) // '!')
     end select
 
   end function get_dataset

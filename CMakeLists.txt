@@ -17,6 +17,8 @@ elseif (CMAKE_Fortran_COMPILER_ID MATCHES GNU)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -g -gdwarf -Og -fbacktrace -fcheck=all")
   endif ()
 endif ()
+set (CMAKE_Fortran_MODULE_DIRECTORY "${CMAKE_BINARY_DIR}")
+include_directories(${CMAKE_BINARY_DIR})
 
 if (DEFINED ENV{NETCDF} AND (NOT DEFINED ENV{NETCDF_ROOT}))
   set(ENV{NETCDF_ROOT} $ENV{NETCDF})

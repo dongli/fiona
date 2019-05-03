@@ -535,6 +535,9 @@ contains
     
     ! Write time dimension variable.
     if (associated(dataset%time_var)) then
+      if (.not. present(time_in_seconds)) then
+        call log_error('Time in seconds is needed!', __FILE__, __LINE__)
+      end if
       dataset%time_step = dataset%time_step + 1
       ! Update time units because restart may change it.
       write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)

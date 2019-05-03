@@ -57,11 +57,11 @@ For input, use the following paradigm:
 use io_mod
 
 call io_init()
-call io_create_dataset(name='grids', file_path=grids_file_path, mode='input')
-call io_get_dim('location_nv', dataset_name='grids', size=nx)
+call io_create_dataset('grids', file_path=grids_file_path, mode='input')
+call io_get_dim('grids', 'location_nv', size=nx) ! Get dimension size in one line!
 ...
 call io_start_input('grids')
-call io_input('vtx_p', x, dataset_name='grids')
+call io_input('grids', 'vtx_p', x)
 call io_end_input('grids')
 ...
 ```
@@ -69,24 +69,25 @@ call io_end_input('grids')
 For output:
 
 ```fortran
-call io_create_dataset(name='mpas_mesh', file_path='mpas_mesh.' // trim(to_string(mesh%nCells)) // '.nc')
-call io_add_att('on_a_sphere',   'YES',              dataset_name='mpas_mesh')
-call io_add_att('sphere_radius', 1.0d0,              dataset_name='mpas_mesh')
+call io_create_dataset('mpas_mesh', file_path='mpas_mesh.' // trim(to_string(mesh%nCells)) // '.nc')
+call io_add_att('mpas_mesh', 'on_a_sphere',   'YES')
+call io_add_att('mpas_mesh', 'sphere_radius', 1.0d0)
 ...
-call io_add_dim('nCells',       size=mesh%nCells,    dataset_name='mpas_mesh')
-call io_add_dim('nEdges',       size=mesh%nEdges,    dataset_name='mpas_mesh')
-call io_add_dim('nVertices',    size=mesh%nVertices, dataset_name='mpas_mesh')
+call io_add_dim('mpas_mesh', 'nCells',    size=mesh%nCells)
+call io_add_dim('mpas_mesh', 'nEdges',    size=mesh%nEdges)
+call io_add_dim('mpas_mesh', 'nVertices', size=mesh%nVertices)
 ...
-call io_add_var('latCell',      long_name='Latitude of all cell centers',        units='radian', dim_names=['nCells'], data_type='real(8)', dataset_name='mpas_mesh')
-call io_add_var('lonCell',      long_name='Longitude of all cell centers',       units='radian', dim_names=['nCells'], data_type='real(8)', dataset_name='mpas_mesh')
-call io_add_var('xCell',        long_name='x axis position of all cell centers', units='m',      dim_names=['nCells'], data_type='real(8)', dataset_name='mpas_mesh')
-call io_add_var('yCell',        long_name='y axis position of all cell centers', units='m',      dim_names=['nCells'], data_type='real(8)', dataset_name='mpas_mesh')
-call io_add_var('zCell',        long_name='z axis position of all cell centers', units='m',      dim_names=['nCells'], data_type='real(8)', dataset_name='mpas_mesh')
-call io_output('latCell',       mesh%latCell,        dataset_name='mpas_mesh')
-call io_output('lonCell',       mesh%lonCell,        dataset_name='mpas_mesh')
-call io_output('xCell',         mesh%xCell,          dataset_name='mpas_mesh')
-call io_output('yCell',         mesh%yCell,          dataset_name='mpas_mesh')
-call io_output('zCell',         mesh%zCell,          dataset_name='mpas_mesh')
+call io_add_var('mpas_mesh', 'latCell',   long_name='Latitude of all cell centers',        units='radian', dim_names=['nCells'], data_type='real(8)')
+call io_add_var('mpas_mesh', 'lonCell',   long_name='Longitude of all cell centers',       units='radian', dim_names=['nCells'], data_type='real(8)')
+call io_add_var('mpas_mesh', 'xCell',     long_name='x axis position of all cell centers', units='m',      dim_names=['nCells'], data_type='real(8)')
+call io_add_var('mpas_mesh', 'yCell',     long_name='y axis position of all cell centers', units='m',      dim_names=['nCells'], data_type='real(8)')
+call io_add_var('mpas_mesh', 'zCell',     long_name='z axis position of all cell centers', units='m',      dim_names=['nCells'], data_type='real(8)')
+...
+call io_output('mpas_mesh', 'latCell',    mesh%latCell)
+call io_output('mpas_mesh', 'lonCell',    mesh%lonCell)
+call io_output('mpas_mesh', 'xCell',      mesh%xCell)
+call io_output('mpas_mesh', 'yCell',      mesh%yCell)
+call io_output('mpas_mesh', 'zCell',      mesh%zCell)
 ...
 call io_end_output(dataset_name='mpas_mesh')
 ```

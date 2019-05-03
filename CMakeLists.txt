@@ -50,5 +50,6 @@ add_library(fiona ${sources})
 if (EXISTS lib/container/CMakeLists.txt)
   add_subdirectory(lib/container)
   include_directories(${CMAKE_BINARY_DIR}/fortran_container)
-  target_link_libraries(fiona netcdf netcdff fortran_container)
 endif ()
+
+target_link_libraries(fiona netcdf netcdff fortran_container)

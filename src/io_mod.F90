@@ -78,6 +78,10 @@ module io_mod
 
   interface io_get_att
     module procedure io_get_att_str
+    module procedure io_get_att_i4
+    module procedure io_get_att_i8
+    module procedure io_get_att_r4
+    module procedure io_get_att_r8
   end interface io_get_att
 
   interface io_input
@@ -812,11 +816,11 @@ contains
 
   end subroutine io_get_dim
 
-  function io_get_att_str(dataset_name, name) result(res)
+  subroutine io_get_att_str(dataset_name, name, value)
 
-    character(*), intent(in) :: dataset_name
-    character(*), intent(in) :: name
-    character(:), allocatable :: res
+    character(*), intent(in )              :: dataset_name
+    character(*), intent(in )              :: name
+    character(:), intent(out), allocatable :: value
 
     type(dataset_type), pointer :: dataset
     character(256) att
@@ -828,10 +832,82 @@ contains
     if (ierr /= NF90_NOERR) then
       call log_error('Failed to get att "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
     end if
-    res = trim(att)
+    value = trim(att)
 
-  end function io_get_att_str
+  end subroutine io_get_att_str
 
+  subroutine io_get_att_i4(dataset_name, name, value)
+
+    character(*), intent(in ) :: dataset_name
+    character(*), intent(in ) :: name
+    integer  (4), intent(out) :: value
+
+    type(dataset_type), pointer :: dataset
+    integer ierr
+
+    dataset => get_dataset(dataset_name, mode='input')
+
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
+    if (ierr /= NF90_NOERR) then
+      call log_error('Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
+    end if
+
+  end subroutine io_get_att_i4
+
+  subroutine io_get_att_i8(dataset_name, name, value)
+
+    character(*), intent(in ) :: dataset_name
+    character(*), intent(in ) :: name
+    integer  (8), intent(out) :: value
+
+    type(dataset_type), pointer :: dataset
+    integer ierr
+
+    dataset => get_dataset(dataset_name, mode='input')
+
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
+    if (ierr /= NF90_NOERR) then
+      call log_error('Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
+    end if
+
+  end subroutine io_get_att_i8
+
+  subroutine io_get_att_r4(dataset_name, name, value)
+
+    character(*), intent(in ) :: dataset_name
+    character(*), intent(in ) :: name
+    real     (4), intent(out) :: value
+
+    type(dataset_type), pointer :: dataset
+    integer ierr
+
+    dataset => get_dataset(dataset_name, mode='input')
+
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
+    if (ierr /= NF90_NOERR) then
+      call log_error('Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
+    end if
+
+  end subroutine io_get_att_r4
+
+  subroutine io_get_att_r8(dataset_name, name, value)
+
+    character(*), intent(in)  :: dataset_name
+    character(*), intent(in)  :: name
+    real     (8), intent(out) :: value
+
+    type(dataset_type), pointer :: dataset
+    integer ierr
+
+    dataset => get_dataset(dataset_name, mode='input')
+
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
+    if (ierr /= NF90_NOERR) then
+      call log_error('Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
+    end if
+
+  end subroutine io_get_att_r8
+  
   subroutine io_input_1d(dataset_name, name, array)
 
     character(*), intent(in) :: dataset_name

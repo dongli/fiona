@@ -62,7 +62,10 @@ module io_mod
     character(256) long_name
     character(60) units
     integer data_type
+    class(*), pointer :: missing_value => null()
     type(var_dim_type), allocatable :: dims(:)
+  contains
+    final :: var_final
   end type var_type
 
   type(hash_table_type) datasets
@@ -352,14 +355,15 @@ contains
 
   end subroutine io_add_dim
 
-  subroutine io_add_var(dataset_name, name, long_name, units, data_type, dim_names)
+  subroutine io_add_var(dataset_name, name, long_name, units, dim_names, data_type, missing_value)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     character(*), intent(in) :: long_name
     character(*), intent(in) :: units
-    character(*), intent(in), optional :: data_type
     character(*), intent(in) :: dim_names(:)
+    character(*), intent(in), optional :: data_type
+    class(*), intent(in), optional :: missing_value
 
     type(dataset_type), pointer :: dataset
     type(var_type) :: var
@@ -399,6 +403,10 @@ contains
       case default
         call log_error('Unknown data type ' // trim(data_type) // ' for variable ' // trim(name) // '!')
       end select
+    end if
+
+    if (present(missing_value)) then
+      allocate(var%missing_value, source=missing_value)
     end if
 
     allocate(var%dims(size(dim_names)))
@@ -502,6 +510,18 @@ contains
         end if
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
+        if (associated(var%missing_value)) then
+          select type (missing_value => var%missing_value)
+          type is (integer(4))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+          type is (integer(8))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+          type is (real(4))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+          type is (real(8))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+          end select
+        end if
         call iter%next()
       end do
 
@@ -1112,5 +1132,15 @@ contains
     end select
 
   end function get_var_from_dataset
+
+  subroutine var_final(this)
+
+    type(var_type), intent(inout) :: this
+
+    if (associated(this%missing_value)) then
+      deallocate(this%missing_value)
+    end if
+
+  end subroutine var_final
 
 end module io_mod

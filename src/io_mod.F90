@@ -717,8 +717,8 @@ contains
     ub2 = ubound(array, 2)
     lb3 = lbound(array, 3)
     ub3 = ubound(array, 3)
-    lb3 = lbound(array, 4)
-    ub3 = ubound(array, 4)
+    lb4 = lbound(array, 4)
+    ub4 = ubound(array, 4)
 
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then

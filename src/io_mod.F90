@@ -463,7 +463,7 @@ contains
     end if
 
     if (dataset%new_file_alert == 'N/A' .or. (associated(is_alerted) .and. is_alerted(dataset%new_file_alert)) .or. dataset%time_step == 0) then
-      ierr = NF90_CREATE(file_path, NF90_CLOBBER, dataset%id)
+      ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
       call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
       ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'dataset', dataset%name)
       ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'desc', dataset%desc)
@@ -522,7 +522,7 @@ contains
       dataset%time_step = 0 ! Reset to zero!
       dataset%last_file_path = file_path
     else
-      ierr = NF90_OPEN(dataset%last_file_path, NF90_WRITE, dataset%id)
+      ierr = NF90_OPEN(dataset%last_file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
       call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
     end if
     
@@ -767,7 +767,7 @@ contains
 
     dataset => get_dataset(dataset_name, mode='input')
 
-    ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE, dataset%id)
+    ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
     call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // ' to input!', __FILE__, __LINE__)
 
   end subroutine io_start_input
@@ -795,7 +795,7 @@ contains
       dim => dataset%get_dim(name)
 
       ! Temporally open the data file.
-      ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE, dataset%id)
+      ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
       call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
       ierr = NF90_INQ_DIMID(dataset%id, name, dimid)

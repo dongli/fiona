@@ -464,9 +464,7 @@ contains
 
     if (dataset%new_file_alert == 'N/A' .or. (associated(is_alerted) .and. is_alerted(dataset%new_file_alert)) .or. dataset%time_step == 0) then
       ierr = NF90_CREATE(file_path, NF90_CLOBBER, dataset%id)
-      if (ierr /= NF90_NOERR) then
-        call log_error('Failed to create NetCDF file to output!')
-      end if
+      call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
       ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'dataset', dataset%name)
       ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'desc', dataset%desc)
       ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'author', dataset%author)
@@ -492,9 +490,7 @@ contains
       do while (.not. iter%ended())
         dim => dataset%get_dim(iter%key)
         ierr = NF90_DEF_DIM(dataset%id, dim%name, dim%size, dim%id)
-        if (ierr /= NF90_NOERR) then
-          call log_error('Failed to define dimension ' // trim(dim%name) // '!')
-        end if
+        call handle_error(ierr, 'Failed to define dimension ' // trim(dim%name) // '!', __FILE__, __LINE__)
         call iter%next()
       end do
 
@@ -505,9 +501,7 @@ contains
           dimids(i) = var%dims(i)%ptr%id
         end do
         ierr = NF90_DEF_VAR(dataset%id, var%name, var%data_type, dimids(1:size(var%dims)), var%id)
-        if (ierr /= NF90_NOERR) then
-          call log_error('Failed to define variable ' // trim(var%name) // '!')
-        end if
+        call handle_error(ierr, 'Failed to define variable ' // trim(var%name) // '!', __FILE__, __LINE__)
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
         if (associated(var%missing_value)) then
@@ -525,15 +519,11 @@ contains
         call iter%next()
       end do
 
-      ierr = NF90_ENDDEF(dataset%id)
-
       dataset%time_step = 0 ! Reset to zero!
       dataset%last_file_path = file_path
     else
       ierr = NF90_OPEN(dataset%last_file_path, NF90_WRITE, dataset%id)
-      if (ierr /= NF90_NOERR) then
-        call log_error('Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-      end if
+      call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
     end if
     
     ! Write time dimension variable.
@@ -545,11 +535,13 @@ contains
       ! Update time units because restart may change it.
       write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
       ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
+      call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
       ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
-      if (ierr /= NF90_NOERR) then
-        call log_error('Failed to write variable time!')
-      end if
+      call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
     end if
+
+    ierr = NF90_ENDDEF(dataset%id)
+    call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
 
   end subroutine io_start_output
 
@@ -574,9 +566,7 @@ contains
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to write variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '! ' // trim(NF90_STRERROR(ierr)))
-    end if
+    call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
   end subroutine io_output_0d
 
@@ -622,9 +612,7 @@ contains
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to write variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '! ' // trim(NF90_STRERROR(ierr)))
-    end if
+    call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
   end subroutine io_output_1d
 
@@ -666,9 +654,7 @@ contains
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!' // NF90_STRERROR(ierr))
-    end if
+    call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
   end subroutine io_output_2d
 
@@ -710,9 +696,7 @@ contains
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!' // NF90_STRERROR(ierr))
-    end if
+    call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
   end subroutine io_output_3d
 
@@ -756,9 +740,7 @@ contains
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!' // NF90_STRERROR(ierr))
-    end if
+    call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
   end subroutine io_output_4d
 
@@ -772,9 +754,7 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
 
     ierr = NF90_CLOSE(dataset%id)
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to close dataset ' // trim(dataset%name) // '!')
-    end if
+    call handle_error(ierr, 'Failed to close dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
   end subroutine io_end_output
 
@@ -788,9 +768,7 @@ contains
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE, dataset%id)
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to open NetCDF file ' // trim(dataset%file_path) // ' to input! ' // trim(NF90_STRERROR(ierr)))
-    end if
+    call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // ' to input!', __FILE__, __LINE__)
 
   end subroutine io_start_input
 
@@ -818,19 +796,13 @@ contains
 
       ! Temporally open the data file.
       ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE, dataset%id)
-      if (ierr /= NF90_NOERR) then
-        call log_error('Failed to open NetCDF file ' // trim(dataset%file_path) // '! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-      end if
+      call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
       ierr = NF90_INQ_DIMID(dataset%id, name, dimid)
-      if (ierr /= NF90_NOERR) then
-        call log_error('Failed to inquire dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-      end if
+      call handle_error(ierr, 'Failed to inquire dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
       ierr = NF90_INQUIRE_DIMENSION(dataset%id, dimid, len=dim%size)
-      if (ierr /= NF90_NOERR) then
-        call log_error('Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-      end if
+      call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
     end if
     if (present(size)) size = dim%size
 
@@ -849,9 +821,7 @@ contains
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, att)
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to get att "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
-    end if
+    call handle_error(ierr, 'Failed to get att "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
     value = trim(att)
 
   end subroutine io_get_att_str
@@ -868,9 +838,7 @@ contains
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
-    end if
+    call handle_error(ierr, 'Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_i4
 
@@ -886,9 +854,7 @@ contains
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
-    end if
+    call handle_error(ierr, 'Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_i8
 
@@ -904,9 +870,7 @@ contains
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
-    end if
+    call handle_error(ierr, 'Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_r4
 
@@ -922,9 +886,7 @@ contains
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!')
-    end if
+    call handle_error(ierr, 'Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_r8
   
@@ -944,9 +906,7 @@ contains
     ub = ubound(array, 1)
 
     ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    if (ierr /= NF90_NOERR) then
-      call log_error('No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-    end if
+    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
       ierr = NF90_GET_VAR(dataset%id, varid, array)
@@ -955,9 +915,7 @@ contains
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-    end if
+    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_1d
 
@@ -979,9 +937,7 @@ contains
     ub2 = ubound(array, 2)
 
     ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    if (ierr /= NF90_NOERR) then
-      call log_error('No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-    end if
+    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
       ierr = NF90_GET_VAR(dataset%id, varid, array)
@@ -990,9 +946,7 @@ contains
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"! ' // NF90_STRERROR(ierr), __FILE__, __LINE__)
-    end if
+    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_2d
 
@@ -1016,9 +970,7 @@ contains
     ub3 = ubound(array, 3)
 
     ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    if (ierr /= NF90_NOERR) then
-      call log_error('No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-    end if
+    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
       ierr = NF90_GET_VAR(dataset%id, varid, array)
@@ -1027,9 +979,7 @@ contains
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"! ' // NF90_STRERROR(ierr), __FILE__, __LINE__)
-    end if
+    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_3d
 
@@ -1055,9 +1005,7 @@ contains
     ub3 = ubound(array, 4)
 
     ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    if (ierr /= NF90_NOERR) then
-      call log_error('No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-    end if
+    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
       ierr = NF90_GET_VAR(dataset%id, varid, array)
@@ -1066,9 +1014,7 @@ contains
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    if (ierr /= NF90_NOERR) then
-      call log_error('Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"! ' // NF90_STRERROR(ierr), __FILE__, __LINE__)
-    end if
+    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_4d
 
@@ -1082,6 +1028,7 @@ contains
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_CLOSE(dataset%id)
+    call handle_error(ierr, 'Failed to end input!', __FILE__, __LINE__)
 
   end subroutine io_end_input
 
@@ -1142,5 +1089,18 @@ contains
     end if
 
   end subroutine var_final
+
+  subroutine handle_error(ierr, msg, file, line)
+
+    integer, intent(in) :: ierr
+    character(*), intent(in) :: msg
+    character(*), intent(in), optional :: file
+    integer, intent(in), optional :: line
+
+    if (ierr /= NF90_NOERR) then
+      call log_error(msg // ' ' // trim(NF90_STRERROR(ierr)), file, line)
+    end if
+
+  end subroutine handle_error
 
 end module io_mod

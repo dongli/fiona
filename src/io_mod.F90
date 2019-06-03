@@ -31,13 +31,11 @@ module io_mod
     character(256) :: file_path = 'N/A'
     character(256) :: file_prefix = 'N/A'
     character(10) mode
-    character(10) :: new_file_alert = 'N/A'
     character(256) last_file_path
     type(var_type), pointer :: time_var => null()
     type(hash_table_type) atts
     type(hash_table_type) dims
     type(hash_table_type) vars
-    real period
     integer :: time_step = 0
   contains
     procedure :: get_dim => get_dim_from_dataset
@@ -94,35 +92,15 @@ module io_mod
     module procedure io_input_4d
   end interface io_input
 
-  interface
-    subroutine add_alert_interface(name, months, days, hours, minutes, seconds)
-      character(*), intent(in) :: name
-      real, intent(in), optional :: months
-      real, intent(in), optional :: days
-      real, intent(in), optional :: hours
-      real, intent(in), optional :: minutes
-      real, intent(in), optional :: seconds
-    end subroutine add_alert_interface
-
-    function is_alerted_interface(name) result(res)
-      character(*), intent(in) :: name
-      logical res
-    end function is_alerted_interface
-  end interface
-
   character(30) time_units_str
   character(30) start_time_str
-  procedure(add_alert_interface), pointer :: add_alert => null()
-  procedure(is_alerted_interface), pointer :: is_alerted => null()
 
 contains
 
-  subroutine io_init(time_units, start_time, register_add_alert, register_is_alerted)
+  subroutine io_init(time_units, start_time)
 
     character(*), intent(in), optional :: time_units
     character(*), intent(in), optional :: start_time
-    procedure(add_alert_interface), optional :: register_add_alert
-    procedure(is_alerted_interface), optional :: register_is_alerted
 
     if (present(time_units)) then
       time_units_str = time_units
@@ -142,37 +120,26 @@ contains
       start_time_str = start_time
     end if
 
-    if (present(register_add_alert)) then
-      add_alert => register_add_alert
-    end if
-    if (present(register_is_alerted)) then
-      is_alerted => register_is_alerted
-    end if
-
     datasets = hash_table()
 
     call log_notice('IO module is initialized.')
 
   end subroutine io_init
 
-  subroutine io_create_dataset(name, desc, file_prefix, file_path, mode, period, time_step_size, frames_per_file)
+  subroutine io_create_dataset(name, desc, file_prefix, file_path, mode, time_step_size)
 
     character(*), intent(in) :: name
     character(*), intent(in), optional :: desc
     character(*), intent(in), optional :: file_prefix
     character(*), intent(in), optional :: file_path
     character(*), intent(in), optional :: mode
-    character(*), intent(in), optional :: period
     real, intent(in), optional :: time_step_size
-    character(*), intent(in), optional :: frames_per_file
 
-    character(30) period_, time_value, time_units
     character(10) mode_
     character(256) desc_, file_prefix_, file_path_
     type(dataset_type) dataset
     logical is_exist
     integer i
-    real value
 
     if (present(desc)) then
       desc_ = desc
@@ -193,16 +160,6 @@ contains
       mode_ = mode
     else
       mode_ = 'output'
-    end if
-    if (present(period)) then
-      period_ = period
-    else
-      period_ = 'once'
-    end if
-    if (present(file_path) .and. period_ /= 'once') then
-      call log_warning('io_create_dataset: Set file_path to "' // trim(file_path_) // &
-        '", but period is not once! Reset period.')
-      period_ = 'once'
     end if
 
     if (mode_ == 'input') then
@@ -227,51 +184,6 @@ contains
       dataset%file_path = file_path_
     end if
     dataset%mode = mode_
-
-    ! Add alert for IO action.
-    if (period_ /= 'once') then
-      time_value = string_split(period_, 1)
-      time_units = string_split(period_, 2)
-      read(time_value, *) dataset%period 
-    else
-      time_units = 'once'
-    end if
-    select case (time_units)
-    case ('days')
-      dataset%period = dataset%period * 86400
-    case ('hours')
-      dataset%period = dataset%period * 3600
-    case ('minutes')
-      dataset%period = dataset%period * 60
-    case ('seconds')
-      dataset%period = dataset%period
-    case ('steps')
-      dataset%period = dataset%period * time_step_size
-    case ('once')
-      dataset%period = 0
-    case default
-      call log_error('Invalid IO period ' // trim(period_) // '!')
-    end select
-
-    if (dataset%period /= 0.0 .and. associated(add_alert)) then
-      call add_alert(trim(dataset%name) // '.' // trim(dataset%mode), seconds=dataset%period)
-    end if
-
-    ! Add alert for create new file.
-    if (present(frames_per_file) .and. frames_per_file /= 'N/A') then
-      dataset%new_file_alert = trim(dataset%name) // '.new_file'
-      time_value = string_split(frames_per_file, 1)
-      time_units = string_split(frames_per_file, 2)
-      read(time_value, *) value
-        select case (time_units)
-        case ('months')
-          call add_alert(dataset%new_file_alert, months=value)
-        case ('days')
-          call add_alert(dataset%new_file_alert, days=value)
-        case default
-          call log_error('Invalid IO period ' // trim(period_) // '!')
-        end select
-    end if
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
 
@@ -433,10 +345,11 @@ contains
 
   end subroutine io_add_var
 
-  subroutine io_start_output(dataset_name, time_in_seconds, tag)
+  subroutine io_start_output(dataset_name, time_in_seconds, new_file, tag)
 
     character(*), intent(in) :: dataset_name
     real(8), intent(in), optional :: time_in_seconds
+    logical, intent(in), optional :: new_file
     character(*), intent(in), optional :: tag
 
     character(256) file_path
@@ -444,9 +357,16 @@ contains
     type(hash_table_iterator_type) iter
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
+    logical new_file_
     integer i, ierr, dimids(10)
 
     dataset => get_dataset(dataset_name, mode='output')
+
+    if (present(new_file)) then
+      new_file_ = new_file
+    else
+      new_file_ = .true.
+    end if
 
     if (present(tag)) then
       if (dataset%file_path /= 'N/A') then
@@ -462,7 +382,7 @@ contains
       end if
     end if
 
-    if (dataset%new_file_alert == 'N/A' .or. (associated(is_alerted) .and. is_alerted(dataset%new_file_alert)) .or. dataset%time_step == 0) then
+    if (dataset%time_step == 0 .or. new_file_) then
       ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
       call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
       ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'dataset', dataset%name)

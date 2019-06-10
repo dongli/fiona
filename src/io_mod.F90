@@ -341,7 +341,7 @@ contains
 
     call dataset%vars%insert(name, var)
 
-    if (name == 'Time') dataset%time_var => dataset%get_var(name)
+    if (name == 'Time' .or. name == 'time') dataset%time_var => dataset%get_var(name)
 
   end subroutine io_add_var
 
@@ -372,7 +372,7 @@ contains
       if (dataset%file_path /= 'N/A') then
         file_path = trim(string_delete(dataset%file_path, '.nc')) // '.' // trim(tag) // '.nc'
       else
-        write(file_path, "(A, '.', A, '.nc')") trim(dataset%file_prefix), tag
+        write(file_path, "(A, '.', A, '.nc')") trim(dataset%file_prefix), trim(tag)
       end if
     else
       if (dataset%file_path /= 'N/A') then
@@ -456,12 +456,14 @@ contains
       write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
       ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
       call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
+      ierr = NF90_ENDDEF(dataset%id)
+      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
       ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
       call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
+    else
+      ierr = NF90_ENDDEF(dataset%id)
+      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
     end if
-
-    ierr = NF90_ENDDEF(dataset%id)
-    call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
 
   end subroutine io_start_output
 

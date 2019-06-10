@@ -44,12 +44,15 @@ endif ()
 if (EXISTS ${PROJECT_SOURCE_DIR}/lib/container/CMakeLists.txt)
   add_subdirectory(lib/container)
 endif ()
+if (EXISTS ${PROJECT_SOURCE_DIR}/lib/flogger/CMakeLists.txt)
+  add_subdirectory(lib/flogger)
+endif ()
 
 set(sources
   src/string_mod.F90
-  src/log_mod.F90
   src/io_mod.F90
+  src/fiona.F90
 )
 
 add_library(fiona ${sources})
-target_link_libraries(fiona netcdf netcdff fortran_container)
+target_link_libraries(fiona netcdf netcdff fortran_container flogger)

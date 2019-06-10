@@ -1,7 +1,7 @@
 module io_mod
 
   use netcdf
-  use log_mod
+  use flogger
   use string_mod
   use hash_table_mod
 

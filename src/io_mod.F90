@@ -439,6 +439,9 @@ contains
         call iter%next()
       end do
 
+      ierr = NF90_ENDDEF(dataset%id)
+      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
+
       dataset%time_step = 0 ! Reset to zero!
       dataset%last_file_path = file_path
     else
@@ -456,13 +459,8 @@ contains
       write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
       ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
       call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
-      ierr = NF90_ENDDEF(dataset%id)
-      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
       ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
       call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
-    else
-      ierr = NF90_ENDDEF(dataset%id)
-      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
     end if
 
   end subroutine io_start_output

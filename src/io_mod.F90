@@ -474,15 +474,23 @@ contains
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
     integer ierr
+    integer start(1)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+    if (var%dims(1)%ptr%size == NF90_UNLIMITED) then
+      start(1) = dataset%time_step
+    else
+      start(1) = 1
+    end if
     select type (value)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, value)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, value, start)
+    type is (real(4))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, value, start)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, value)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, value, start)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -527,6 +535,8 @@ contains
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
+    type is (real(4))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
     class default
@@ -568,6 +578,8 @@ contains
 
     select type (array)
     type is (integer)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
+    type is (real(4))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
@@ -613,6 +625,8 @@ contains
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
+    type is (real(4))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
     end select
@@ -656,6 +670,8 @@ contains
 
     select type (array)
     type is (integer)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
+    type is (real(4))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
@@ -830,6 +846,8 @@ contains
     select type (array)
     type is (integer)
       ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     class default
@@ -860,6 +878,8 @@ contains
     call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
@@ -893,6 +913,8 @@ contains
     call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
@@ -928,6 +950,8 @@ contains
     call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)

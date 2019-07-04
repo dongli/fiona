@@ -736,13 +736,16 @@ contains
 
       ! Temporally open the data file.
       ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
-      call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
       ierr = NF90_INQ_DIMID(dataset%id, name, dimid)
       call handle_error(ierr, 'Failed to inquire dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
       ierr = NF90_INQUIRE_DIMENSION(dataset%id, dimid, len=dim%size)
       call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+
+      ierr = NF90_CLOSE(dataset%id)
+      call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     end if
     if (present(size)) size = dim%size
 

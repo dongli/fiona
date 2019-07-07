@@ -128,7 +128,7 @@ contains
 
   end subroutine io_init
 
-  subroutine io_create_dataset(name, desc, file_prefix, file_path, mode, time_step_size)
+  subroutine io_create_dataset(name, desc, file_prefix, file_path, mode, time_step_size, mute)
 
     character(*), intent(in) :: name
     character(*), intent(in), optional :: desc
@@ -136,6 +136,7 @@ contains
     character(*), intent(in), optional :: file_path
     character(*), intent(in), optional :: mode
     real, intent(in), optional :: time_step_size
+    logical, intent(in), optional :: mute
 
     character(10) mode_
     character(256) desc_, file_prefix_, file_path_
@@ -189,6 +190,9 @@ contains
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
 
+    if (present(mute)) then
+      if (mute) return
+    end if
     if (dataset%file_path /= 'N/A') then
       call log_notice('Create ' // trim(dataset%mode) // ' dataset ' // trim(dataset%file_path) // '.')
     else if (dataset%file_prefix /= 'N/A') then

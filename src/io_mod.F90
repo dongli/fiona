@@ -666,8 +666,8 @@ contains
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine io_output_4d
-
+  end subroutine 
+  
   subroutine io_output_5d(dataset_name, name, array)
 
     character(*), intent(in) :: dataset_name
@@ -678,7 +678,7 @@ contains
     type(var_type    ), pointer :: var
     integer lb1, ub1, lb2, ub2, lb3, ub3, lb4, ub4, lb5, ub5
     integer i, ierr
-    integer start(5), count(5)
+    integer start(4), count(4)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
@@ -691,8 +691,8 @@ contains
     ub3 = ubound(array, 3)
     lb4 = lbound(array, 4)
     ub4 = ubound(array, 4)
-    lb4 = lbound(array, 5)
-    ub4 = ubound(array, 5)
+    lb5 = lbound(array, 5)
+    ub5 = ubound(array, 5)
 
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
@@ -714,7 +714,6 @@ contains
 
   end subroutine io_output_5d
 
-  
   subroutine io_end_output(dataset_name)
 
     character(*), intent(in) :: dataset_name

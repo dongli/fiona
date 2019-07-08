@@ -84,9 +84,11 @@ module io_mod
     module procedure io_get_att_i8
     module procedure io_get_att_r4
     module procedure io_get_att_r8
+    module procedure io_get_var_att_str
   end interface io_get_att
 
   interface io_input
+    module procedure io_input_0d
     module procedure io_input_1d
     module procedure io_input_2d
     module procedure io_input_3d
@@ -128,7 +130,7 @@ contains
 
   end subroutine io_init
 
-  subroutine io_create_dataset(name, desc, file_prefix, file_path, mode, time_step_size)
+  subroutine io_create_dataset(name, desc, file_prefix, file_path, mode, time_step_size, mute)
 
     character(*), intent(in) :: name
     character(*), intent(in), optional :: desc
@@ -136,6 +138,7 @@ contains
     character(*), intent(in), optional :: file_path
     character(*), intent(in), optional :: mode
     real, intent(in), optional :: time_step_size
+    logical, intent(in), optional :: mute
 
     character(10) mode_
     character(256) desc_, file_prefix_, file_path_
@@ -189,6 +192,9 @@ contains
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
 
+    if (present(mute)) then
+      if (mute) return
+    end if
     if (dataset%file_path /= 'N/A') then
       call log_notice('Create ' // trim(dataset%mode) // ' dataset ' // trim(dataset%file_path) // '.')
     else if (dataset%file_prefix /= 'N/A') then
@@ -238,33 +244,35 @@ contains
 
     call dataset%dims%insert(name, dim)
 
-    if (present(add_var) .and. add_var) then
-      ! Add corresponding dimension variable.
-      if (.not. present(long_name)) then
-        select case (name)
-        case ('lon', 'ilon')
-          dim%long_name = 'Longitude'
-        case ('lat', 'ilat')
-          dim%long_name = 'Latitude'
-        case ('time', 'Time')
-          dim%long_name = 'Time'
-        case default
-          dim%long_name = long_name
-        end select
+    if (present(add_var)) then
+      if (add_var) then
+        ! Add corresponding dimension variable.
+        if (.not. present(long_name)) then
+          select case (name)
+          case ('lon', 'ilon')
+            dim%long_name = 'Longitude'
+          case ('lat', 'ilat')
+            dim%long_name = 'Latitude'
+          case ('time', 'Time')
+            dim%long_name = 'Time'
+          case default
+            dim%long_name = long_name
+          end select
+        end if
+        if (.not. present(units)) then
+          select case (name)
+          case ('lon', 'ilon')
+            dim%units = 'degrees_east'
+          case ('lat', 'ilat')
+            dim%units = 'degrees_north'
+          case ('time', 'Time')
+            write(dim%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
+          case default
+            dim%units = units
+          end select
+        end if
+        call io_add_var(dataset_name, name, long_name=dim%long_name, units=dim%units, dim_names=[name], data_type='real(8)')
       end if
-      if (.not. present(units)) then
-        select case (name)
-        case ('lon', 'ilon')
-          dim%units = 'degrees_east'
-        case ('lat', 'ilat')
-          dim%units = 'degrees_north'
-        case ('time', 'Time')
-          write(dim%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
-        case default
-          dim%units = units
-        end select
-      end if
-      call io_add_var(dataset_name, name, long_name=dim%long_name, units=dim%units, dim_names=[name], data_type='real(8)')
     end if
 
   end subroutine io_add_dim
@@ -441,6 +449,9 @@ contains
         call iter%next()
       end do
 
+      ierr = NF90_ENDDEF(dataset%id)
+      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
+
       dataset%time_step = 0 ! Reset to zero!
       dataset%last_file_path = file_path
     else
@@ -458,13 +469,8 @@ contains
       write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
       ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
       call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
-      ierr = NF90_ENDDEF(dataset%id)
-      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
       ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
       call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
-    else
-      ierr = NF90_ENDDEF(dataset%id)
-      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
     end if
 
   end subroutine io_start_output
@@ -478,15 +484,23 @@ contains
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
     integer ierr
+    integer start(1)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+    if (var%dims(1)%ptr%size == NF90_UNLIMITED) then
+      start(1) = dataset%time_step
+    else
+      start(1) = 1
+    end if
     select type (value)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, value)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, value, start)
+    type is (real(4))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, value, start)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, value)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, value, start)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -531,6 +545,8 @@ contains
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
+    type is (real(4))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
     class default
@@ -572,6 +588,8 @@ contains
 
     select type (array)
     type is (integer)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
+    type is (real(4))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
@@ -617,6 +635,8 @@ contains
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
+    type is (real(4))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
     end select
@@ -661,12 +681,14 @@ contains
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
+    type is (real(4))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine 
+  end subroutine io_output_4d
   
   subroutine io_output_5d(dataset_name, name, array)
 
@@ -678,7 +700,7 @@ contains
     type(var_type    ), pointer :: var
     integer lb1, ub1, lb2, ub2, lb3, ub3, lb4, ub4, lb5, ub5
     integer i, ierr
-    integer start(4), count(4)
+    integer start(5), count(5)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
@@ -706,6 +728,8 @@ contains
 
     select type (array)
     type is (integer)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
+    type is (real(4))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
     type is (real(8))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
@@ -765,41 +789,84 @@ contains
       dim => dataset%get_dim(name)
 
       ! Temporally open the data file.
-      ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
-      call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+      ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
+      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
       ierr = NF90_INQ_DIMID(dataset%id, name, dimid)
       call handle_error(ierr, 'Failed to inquire dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
       ierr = NF90_INQUIRE_DIMENSION(dataset%id, dimid, len=dim%size)
       call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+
+      ierr = NF90_CLOSE(dataset%id)
+      call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     end if
     if (present(size)) size = dim%size
 
   end subroutine io_get_dim
 
-  subroutine io_get_att_str(dataset_name, name, value)
+  subroutine io_get_att_str(dataset_name, att_name, value)
 
-    character(*), intent(in )              :: dataset_name
-    character(*), intent(in )              :: name
-    character(:), intent(out), allocatable :: value
+    character(*), intent(in ) :: dataset_name
+    character(*), intent(in ) :: att_name
+    character(*), intent(out) :: value
 
     type(dataset_type), pointer :: dataset
-    character(256) att
     integer ierr
 
     dataset => get_dataset(dataset_name, mode='input')
 
-    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, att)
-    call handle_error(ierr, 'Failed to get att "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
-    value = trim(att)
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
+    call handle_error(ierr, 'Failed to get attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_str
 
-  subroutine io_get_att_i4(dataset_name, name, value)
+  subroutine io_get_var_att_str(dataset_name, var_name, att_name, value)
 
     character(*), intent(in ) :: dataset_name
-    character(*), intent(in ) :: name
+    character(*), intent(in ) :: var_name
+    character(*), intent(in ) :: att_name
+    character(*), intent(out) :: value
+
+    type(dataset_type), pointer :: dataset
+    type(var_type    ), pointer :: var
+    integer ierr
+
+    character(30) name
+    integer num_att, i
+
+    dataset => get_dataset(dataset_name, mode='input')
+    if (dataset%vars%hashed(var_name)) then
+      var => dataset%get_var(var_name)
+    else
+      allocate(var)
+      var%name = var_name
+      call dataset%vars%insert(var_name, var)
+      deallocate(var)
+      var => dataset%get_var(var_name)
+
+      ierr = NF90_INQ_VARID(dataset%id, var_name, var%id)
+      call handle_error(ierr, 'Failed to inquire id of variable "' // trim(var_name) // '"!')
+    end if
+
+    ierr = NF90_GET_ATT(dataset%id, var%id, att_name, value)
+    if (ierr /= NF90_NOERR) then
+      ierr = NF90_INQUIRE_VARIABLE(dataset%id, var%id, natts=num_att)
+      call handle_error(ierr, 'Failed to inquire attribute number of variable "' // trim(var_name) // '"!', __FILE__, __LINE__)
+      do i = 1, num_att
+        ierr = NF90_INQ_ATTNAME(dataset%id, var%id, i, name)
+        call handle_error(ierr, 'Failed to inquire attribute name of variable "' // trim(var_name) // '"!', __FILE__, __LINE__)
+        print *, '- ', trim(name)
+      end do
+    end if
+    call handle_error(ierr, 'Failed to get attribute "' // trim(att_name) // '" of variable "' // trim(var_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+
+  end subroutine io_get_var_att_str
+
+  subroutine io_get_att_i4(dataset_name, att_name, value)
+
+    character(*), intent(in ) :: dataset_name
+    character(*), intent(in ) :: att_name
     integer  (4), intent(out) :: value
 
     type(dataset_type), pointer :: dataset
@@ -807,15 +874,15 @@ contains
 
     dataset => get_dataset(dataset_name, mode='input')
 
-    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
-    call handle_error(ierr, 'Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
+    call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_i4
 
-  subroutine io_get_att_i8(dataset_name, name, value)
+  subroutine io_get_att_i8(dataset_name, att_name, value)
 
     character(*), intent(in ) :: dataset_name
-    character(*), intent(in ) :: name
+    character(*), intent(in ) :: att_name
     integer  (8), intent(out) :: value
 
     type(dataset_type), pointer :: dataset
@@ -823,15 +890,15 @@ contains
 
     dataset => get_dataset(dataset_name, mode='input')
 
-    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
-    call handle_error(ierr, 'Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
+    call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_i8
 
-  subroutine io_get_att_r4(dataset_name, name, value)
+  subroutine io_get_att_r4(dataset_name, att_name, value)
 
     character(*), intent(in ) :: dataset_name
-    character(*), intent(in ) :: name
+    character(*), intent(in ) :: att_name
     real     (4), intent(out) :: value
 
     type(dataset_type), pointer :: dataset
@@ -839,15 +906,15 @@ contains
 
     dataset => get_dataset(dataset_name, mode='input')
 
-    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
-    call handle_error(ierr, 'Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
+    call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_r4
 
-  subroutine io_get_att_r8(dataset_name, name, value)
+  subroutine io_get_att_r8(dataset_name, att_name, value)
 
     character(*), intent(in)  :: dataset_name
-    character(*), intent(in)  :: name
+    character(*), intent(in)  :: att_name
     real     (8), intent(out) :: value
 
     type(dataset_type), pointer :: dataset
@@ -855,15 +922,42 @@ contains
 
     dataset => get_dataset(dataset_name, mode='input')
 
-    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, name, value)
-    call handle_error(ierr, 'Failed to get global attribute "' // trim(name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+    ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
+    call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
   end subroutine io_get_att_r8
-  
-  subroutine io_input_1d(dataset_name, name, array)
+
+  subroutine io_input_0d(dataset_name, var_name, value)
 
     character(*), intent(in) :: dataset_name
-    character(*), intent(in) :: name
+    character(*), intent(in) :: var_name
+    class(*), intent(out) :: value
+
+    type(dataset_type), pointer :: dataset
+    integer ierr, varid
+
+    dataset => get_dataset(dataset_name, mode='input')
+
+    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
+    call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    select type (value)
+    type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, value)
+    type is (real(4))
+      ierr = NF90_GET_VAR(dataset%id, varid, value)
+    type is (real(8))
+      ierr = NF90_GET_VAR(dataset%id, varid, value)
+    class default
+      call log_error('Unsupported data type!', __FILE__, __LINE__)
+    end select
+    call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+
+  end subroutine io_input_0d
+  
+  subroutine io_input_1d(dataset_name, var_name, array)
+
+    character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: var_name
     class(*), intent(out) :: array(:)
 
     type(dataset_type), pointer :: dataset
@@ -875,24 +969,26 @@ contains
     lb = lbound(array, 1)
     ub = ubound(array, 1)
 
-    ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
+    call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_1d
 
-  subroutine io_input_2d(dataset_name, name, array)
+  subroutine io_input_2d(dataset_name, var_name, array)
 
     character(*), intent(in) :: dataset_name
-    character(*), intent(in) :: name
+    character(*), intent(in) :: var_name
     class(*), intent(out) :: array(:,:)
 
     type(dataset_type), pointer :: dataset
@@ -906,24 +1002,26 @@ contains
     lb2 = lbound(array, 2)
     ub2 = ubound(array, 2)
 
-    ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
+    call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_2d
 
-  subroutine io_input_3d(dataset_name, name, array)
+  subroutine io_input_3d(dataset_name, var_name, array)
 
     character(*), intent(in ) :: dataset_name
-    character(*), intent(in ) :: name
+    character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:)
 
     type(dataset_type), pointer :: dataset
@@ -939,24 +1037,26 @@ contains
     lb3 = lbound(array, 3)
     ub3 = ubound(array, 3)
 
-    ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
+    call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_3d
 
-  subroutine io_input_4d(dataset_name, name, array)
+  subroutine io_input_4d(dataset_name, var_name, array)
 
     character(*), intent(in ) :: dataset_name
-    character(*), intent(in ) :: name
+    character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:,:)
 
     type(dataset_type), pointer :: dataset
@@ -974,24 +1074,26 @@ contains
     lb4 = lbound(array, 4)
     ub4 = ubound(array, 4)
 
-    ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
+    call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_4d
   
-  subroutine io_input_5d(dataset_name, name, array)
+  subroutine io_input_5d(dataset_name, var_name, array)
 
     character(*), intent(in ) :: dataset_name
-    character(*), intent(in ) :: name
+    character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:,:,:)
 
     type(dataset_type), pointer :: dataset
@@ -1011,17 +1113,19 @@ contains
     lb5 = lbound(array, 5)
     ub5 = ubound(array, 5)
 
-    ierr = NF90_INQ_VARID(dataset%id, name, varid)
-    call handle_error(ierr, 'No variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
+    call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     type is (real(8))
       ierr = NF90_GET_VAR(dataset%id, varid, array)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
-    call handle_error(ierr, 'Failed to read variable "' // trim(name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_5d
 
@@ -1039,9 +1143,9 @@ contains
 
   end subroutine io_end_input
 
-  function get_dataset(name, mode) result(res)
+  function get_dataset(dataset_name, mode) result(res)
 
-    character(*), intent(in) :: name
+    character(*), intent(in) :: dataset_name
     character(*), intent(in), optional :: mode
     type(dataset_type), pointer :: res
 
@@ -1052,35 +1156,37 @@ contains
     else
       mode_ = 'output'
     end if
-    select type (value => datasets%value(trim(name) // '.' // trim(mode_)))
+    select type (value => datasets%value(trim(dataset_name) // '.' // trim(mode_)))
     type is (dataset_type)
       res => value
     class default
-      call log_error('Failed to get dataset ' // trim(name) // '.' // trim(mode_) // '!')
+      call log_error('Failed to get dataset ' // trim(dataset_name) // '.' // trim(mode_) // '!')
     end select
 
   end function get_dataset
 
-  function get_dim_from_dataset(this, name) result(res)
+  function get_dim_from_dataset(this, dim_name) result(res)
 
     class(dataset_type), intent(in) :: this
-    character(*), intent(in) :: name
+    character(*), intent(in) :: dim_name
     type(dim_type), pointer :: res
 
-    select type (value => this%dims%value(name))
+    res => null()
+    select type (value => this%dims%value(dim_name))
     type is (dim_type)
       res => value
     end select
 
   end function get_dim_from_dataset
 
-  function get_var_from_dataset(this, name) result(res)
+  function get_var_from_dataset(this, var_name) result(res)
 
     class(dataset_type), intent(in) :: this
-    character(*), intent(in) :: name
+    character(*), intent(in) :: var_name
     type(var_type), pointer :: res
 
-    select type (value => this%vars%value(name))
+    res => null()
+    select type (value => this%vars%value(var_name))
     type is (var_type)
       res => value
     end select
@@ -1105,7 +1211,7 @@ contains
     integer, intent(in), optional :: line
 
     if (ierr /= NF90_NOERR) then
-      call log_error(msg // ' ' // trim(NF90_STRERROR(ierr)), file, line)
+      call log_error(trim(msg) // ' ' // trim(NF90_STRERROR(ierr)), file, line)
     end if
 
   end subroutine handle_error

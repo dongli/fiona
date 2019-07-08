@@ -775,6 +775,7 @@ contains
     type(dataset_type), pointer :: dataset
     type(dim_type), pointer :: dim
     integer ierr, dimid
+    integer temp_id
 
     ! TODO: Try to refactor mode usage in dataset key.
     dataset => get_dataset(dataset_name, mode='input')
@@ -789,16 +790,16 @@ contains
       dim => dataset%get_dim(name)
 
       ! Temporally open the data file.
-      ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
+      ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, temp_id)
       call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
-      ierr = NF90_INQ_DIMID(dataset%id, name, dimid)
+      ierr = NF90_INQ_DIMID(temp_id, name, dimid)
       call handle_error(ierr, 'Failed to inquire dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-      ierr = NF90_INQUIRE_DIMENSION(dataset%id, dimid, len=dim%size)
+      ierr = NF90_INQUIRE_DIMENSION(temp_id, dimid, len=dim%size)
       call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-      ierr = NF90_CLOSE(dataset%id)
+      ierr = NF90_CLOSE(temp_id)
       call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     end if
     if (present(size)) size = dim%size

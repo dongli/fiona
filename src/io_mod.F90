@@ -75,6 +75,7 @@ module io_mod
     module procedure io_output_2d
     module procedure io_output_3d
     module procedure io_output_4d
+    module procedure io_output_5d
   end interface io_output
 
   interface io_get_att
@@ -92,6 +93,7 @@ module io_mod
     module procedure io_input_2d
     module procedure io_input_3d
     module procedure io_input_4d
+    module procedure io_input_5d
   end interface io_input
 
   character(30) time_units_str
@@ -687,6 +689,54 @@ contains
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
   end subroutine io_output_4d
+  
+  subroutine io_output_5d(dataset_name, name, array)
+
+    character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: name
+    class(*)    , intent(in) :: array(:,:,:,:,:)
+
+    type(dataset_type), pointer :: dataset
+    type(var_type    ), pointer :: var
+    integer lb1, ub1, lb2, ub2, lb3, ub3, lb4, ub4, lb5, ub5
+    integer i, ierr
+    integer start(5), count(5)
+
+    dataset => get_dataset(dataset_name, mode='output')
+    var => dataset%get_var(name)
+
+    lb1 = lbound(array, 1)
+    ub1 = ubound(array, 1)
+    lb2 = lbound(array, 2)
+    ub2 = ubound(array, 2)
+    lb3 = lbound(array, 3)
+    ub3 = ubound(array, 3)
+    lb4 = lbound(array, 4)
+    ub4 = ubound(array, 4)
+    lb5 = lbound(array, 5)
+    ub5 = ubound(array, 5)
+
+    do i = 1, size(var%dims)
+      if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
+        start(i) = dataset%time_step
+        count(i) = 1
+      else
+        start(i) = 1
+        count(i) = var%dims(i)%ptr%size
+      end if
+    end do
+
+    select type (array)
+    type is (integer)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
+    type is (real(4))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
+    type is (real(8))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
+    end select
+    call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
+
+  end subroutine io_output_5d
 
   subroutine io_end_output(dataset_name)
 
@@ -725,6 +775,7 @@ contains
     type(dataset_type), pointer :: dataset
     type(dim_type), pointer :: dim
     integer ierr, dimid
+    integer temp_id
 
     ! TODO: Try to refactor mode usage in dataset key.
     dataset => get_dataset(dataset_name, mode='input')
@@ -739,16 +790,16 @@ contains
       dim => dataset%get_dim(name)
 
       ! Temporally open the data file.
-      ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
+      ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, temp_id)
       call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
-      ierr = NF90_INQ_DIMID(dataset%id, name, dimid)
+      ierr = NF90_INQ_DIMID(temp_id, name, dimid)
       call handle_error(ierr, 'Failed to inquire dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-      ierr = NF90_INQUIRE_DIMENSION(dataset%id, dimid, len=dim%size)
+      ierr = NF90_INQUIRE_DIMENSION(temp_id, dimid, len=dim%size)
       call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-      ierr = NF90_CLOSE(dataset%id)
+      ierr = NF90_CLOSE(temp_id)
       call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     end if
     if (present(size)) size = dim%size
@@ -1021,8 +1072,8 @@ contains
     ub2 = ubound(array, 2)
     lb3 = lbound(array, 3)
     ub3 = ubound(array, 3)
-    lb3 = lbound(array, 4)
-    ub3 = ubound(array, 4)
+    lb4 = lbound(array, 4)
+    ub4 = ubound(array, 4)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1039,6 +1090,45 @@ contains
     call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine io_input_4d
+  
+  subroutine io_input_5d(dataset_name, var_name, array)
+
+    character(*), intent(in ) :: dataset_name
+    character(*), intent(in ) :: var_name
+    class    (*), intent(out) :: array(:,:,:,:,:)
+
+    type(dataset_type), pointer :: dataset
+    integer lb1, ub1, lb2, ub2, lb3, ub3, lb4, ub4, lb5, ub5
+    integer ierr, varid
+
+    dataset => get_dataset(dataset_name, mode='input')
+
+    lb1 = lbound(array, 1)
+    ub1 = ubound(array, 1)
+    lb2 = lbound(array, 2)
+    ub2 = ubound(array, 2)
+    lb3 = lbound(array, 3)
+    ub3 = ubound(array, 3)
+    lb4 = lbound(array, 4)
+    ub4 = ubound(array, 4)
+    lb5 = lbound(array, 5)
+    ub5 = ubound(array, 5)
+
+    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
+    call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    select type (array)
+    type is (integer)
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(4))
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    type is (real(8))
+      ierr = NF90_GET_VAR(dataset%id, varid, array)
+    class default
+      call log_error('Unsupported array type!', __FILE__, __LINE__)
+    end select
+    call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+
+  end subroutine io_input_5d
 
   subroutine io_end_input(dataset_name)
 

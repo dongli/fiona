@@ -106,6 +106,11 @@ contains
     character(*), intent(in), optional :: time_units
     character(*), intent(in), optional :: start_time
 
+    logical, save :: called = .false.
+
+    if (called) return
+    called = .true.
+
     if (present(time_units)) then
       time_units_str = time_units
       select case (time_units)
@@ -113,8 +118,10 @@ contains
         time_units_in_seconds = 86400.0
       case ('hours')
         time_units_in_seconds = 3600.0
-      case ('seconds')
+      case ('minutes')
         time_units_in_seconds = 60.0
+      case ('seconds')
+        time_units_in_seconds = 1.0
       case default
         call log_error('Invalid time_units ' // trim(time_units) // '!')
       end select

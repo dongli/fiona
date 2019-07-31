@@ -935,11 +935,12 @@ contains
 
   end subroutine io_get_att_r8
 
-  subroutine io_input_0d(dataset_name, var_name, value)
+  subroutine io_input_0d(dataset_name, var_name, value, time_step)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
     class(*), intent(out) :: value
+    integer, intent(in), optional :: time_step
 
     type(dataset_type), pointer :: dataset
     integer ierr, varid
@@ -950,11 +951,23 @@ contains
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (value)
     type is (integer)
-      ierr = NF90_GET_VAR(dataset%id, varid, value)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, value, start=[time_step])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, value)
+      end if
     type is (real(4))
-      ierr = NF90_GET_VAR(dataset%id, varid, value)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, value, start=[time_step])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, value)
+      end if
     type is (real(8))
-      ierr = NF90_GET_VAR(dataset%id, varid, value)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, value, start=[time_step])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, value)
+      end if
     class default
       call log_error('Unsupported data type!', __FILE__, __LINE__)
     end select
@@ -962,30 +975,39 @@ contains
 
   end subroutine io_input_0d
   
-  subroutine io_input_1d(dataset_name, var_name, array)
+  subroutine io_input_1d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
     class(*), intent(out) :: array(:)
+    integer, intent(in), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer lb, ub
     integer ierr, varid
 
     dataset => get_dataset(dataset_name, mode='input')
-
-    lb = lbound(array, 1)
-    ub = ubound(array, 1)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(4))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(8))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -993,32 +1015,39 @@ contains
 
   end subroutine io_input_1d
 
-  subroutine io_input_2d(dataset_name, var_name, array)
+  subroutine io_input_2d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
     class(*), intent(out) :: array(:,:)
+    integer, intent(in), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer lb1, ub1, lb2, ub2
     integer ierr, varid
 
     dataset => get_dataset(dataset_name, mode='input')
-
-    lb1 = lbound(array, 1)
-    ub1 = ubound(array, 1)
-    lb2 = lbound(array, 2)
-    ub2 = ubound(array, 2)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,time_step], count=[size(array, 1),size(array, 2),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(4))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,time_step], count=[size(array, 1),size(array, 2),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(8))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,time_step], count=[size(array, 1),size(array, 2),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -1026,34 +1055,39 @@ contains
 
   end subroutine io_input_2d
 
-  subroutine io_input_3d(dataset_name, var_name, array)
+  subroutine io_input_3d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:)
+    integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer lb1, ub1, lb2, ub2, lb3, ub3
     integer ierr, varid
 
     dataset => get_dataset(dataset_name, mode='input')
-
-    lb1 = lbound(array, 1)
-    ub1 = ubound(array, 1)
-    lb2 = lbound(array, 2)
-    ub2 = ubound(array, 2)
-    lb3 = lbound(array, 3)
-    ub3 = ubound(array, 3)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(4))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(8))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -1061,36 +1095,39 @@ contains
 
   end subroutine io_input_3d
 
-  subroutine io_input_4d(dataset_name, var_name, array)
+  subroutine io_input_4d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:,:)
+    integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer lb1, ub1, lb2, ub2, lb3, ub3, lb4, ub4
     integer ierr, varid
 
     dataset => get_dataset(dataset_name, mode='input')
-
-    lb1 = lbound(array, 1)
-    ub1 = ubound(array, 1)
-    lb2 = lbound(array, 2)
-    ub2 = ubound(array, 2)
-    lb3 = lbound(array, 3)
-    ub3 = ubound(array, 3)
-    lb4 = lbound(array, 4)
-    ub4 = ubound(array, 4)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(4))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(8))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -1098,38 +1135,39 @@ contains
 
   end subroutine io_input_4d
   
-  subroutine io_input_5d(dataset_name, var_name, array)
+  subroutine io_input_5d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:,:,:)
+    integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer lb1, ub1, lb2, ub2, lb3, ub3, lb4, ub4, lb5, ub5
     integer ierr, varid
 
     dataset => get_dataset(dataset_name, mode='input')
-
-    lb1 = lbound(array, 1)
-    ub1 = ubound(array, 1)
-    lb2 = lbound(array, 2)
-    ub2 = ubound(array, 2)
-    lb3 = lbound(array, 3)
-    ub3 = ubound(array, 3)
-    lb4 = lbound(array, 4)
-    ub4 = ubound(array, 4)
-    lb5 = lbound(array, 5)
-    ub5 = ubound(array, 5)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     select type (array)
     type is (integer)
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(4))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     type is (real(8))
-      ierr = NF90_GET_VAR(dataset%id, varid, array)
+      if (present(time_step)) then
+        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+      else
+        ierr = NF90_GET_VAR(dataset%id, varid, array)
+      end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select

@@ -14,6 +14,7 @@ module io_mod
   public io_add_att
   public io_add_dim
   public io_add_var
+  public io_has_var
   public io_start_output
   public io_output
   public io_end_output
@@ -361,6 +362,21 @@ contains
     if (name == 'Time' .or. name == 'time') dataset%time_var => dataset%get_var(name)
 
   end subroutine io_add_var
+
+  logical function io_has_var(dataset_name, var_name) result(res)
+
+    character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: var_name
+
+    type(dataset_type), pointer :: dataset
+    integer ierr, varid
+
+    dataset => get_dataset(dataset_name, mode='input')
+
+    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
+    res = ierr == NF90_NOERR
+
+  end function io_has_var
 
   subroutine io_start_output(dataset_name, time_in_seconds, new_file, tag)
 

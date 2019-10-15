@@ -263,9 +263,9 @@ contains
             dim%long_name = 'Latitude'
           case ('time', 'Time')
             dim%long_name = 'Time'
-          case default
-            dim%long_name = long_name
           end select
+        else
+          dim%long_name = long_name
         end if
         if (.not. present(units)) then
           select case (name)
@@ -275,9 +275,9 @@ contains
             dim%units = 'degrees_north'
           case ('time', 'Time')
             write(dim%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
-          case default
-            dim%units = units
           end select
+        else
+          dim%units = units
         end if
         call fiona_add_var(dataset_name, name, long_name=dim%long_name, units=dim%units, dim_names=[name], data_type='real(8)')
       end if

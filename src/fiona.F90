@@ -1,5 +1,5 @@
 module fiona
 
-  use io_mod
+  use fiona_mod
 
 end module fiona

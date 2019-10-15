@@ -1,28 +1,28 @@
-module io_mod
+module fiona_mod
 
   use netcdf
   use flogger
-  use string_mod
+  use string
   use hash_table_mod
 
   implicit none
 
   private
 
-  public io_init
-  public io_create_dataset
-  public io_add_att
-  public io_add_dim
-  public io_add_var
-  public io_has_var
-  public io_start_output
-  public io_output
-  public io_end_output
-  public io_start_input
-  public io_get_dim
-  public io_get_att
-  public io_input
-  public io_end_input
+  public fiona_init
+  public fiona_create_dataset
+  public fiona_add_att
+  public fiona_add_dim
+  public fiona_add_var
+  public fiona_has_var
+  public fiona_start_output
+  public fiona_output
+  public fiona_end_output
+  public fiona_start_input
+  public fiona_get_dim
+  public fiona_get_att
+  public fiona_input
+  public fiona_end_input
 
   type dataset_type
     integer :: id = -1
@@ -70,39 +70,39 @@ module io_mod
   type(hash_table_type) datasets
   real(8) time_units_in_seconds
 
-  interface io_output
-    module procedure io_output_0d
-    module procedure io_output_1d
-    module procedure io_output_2d
-    module procedure io_output_3d
-    module procedure io_output_4d
-    module procedure io_output_5d
-  end interface io_output
+  interface fiona_output
+    module procedure fiona_output_0d
+    module procedure fiona_output_1d
+    module procedure fiona_output_2d
+    module procedure fiona_output_3d
+    module procedure fiona_output_4d
+    module procedure fiona_output_5d
+  end interface fiona_output
 
-  interface io_get_att
-    module procedure io_get_att_str
-    module procedure io_get_att_i4
-    module procedure io_get_att_i8
-    module procedure io_get_att_r4
-    module procedure io_get_att_r8
-    module procedure io_get_var_att_str
-  end interface io_get_att
+  interface fiona_get_att
+    module procedure fiona_get_att_str
+    module procedure fiona_get_att_i4
+    module procedure fiona_get_att_i8
+    module procedure fiona_get_att_r4
+    module procedure fiona_get_att_r8
+    module procedure fiona_get_var_att_str
+  end interface fiona_get_att
 
-  interface io_input
-    module procedure io_input_0d
-    module procedure io_input_1d
-    module procedure io_input_2d
-    module procedure io_input_3d
-    module procedure io_input_4d
-    module procedure io_input_5d
-  end interface io_input
+  interface fiona_input
+    module procedure fiona_input_0d
+    module procedure fiona_input_1d
+    module procedure fiona_input_2d
+    module procedure fiona_input_3d
+    module procedure fiona_input_4d
+    module procedure fiona_input_5d
+  end interface fiona_input
 
   character(30) time_units_str
   character(30) start_time_str
 
 contains
 
-  subroutine io_init(time_units, start_time)
+  subroutine fiona_init(time_units, start_time)
 
     character(*), intent(in), optional :: time_units
     character(*), intent(in), optional :: start_time
@@ -136,9 +136,9 @@ contains
 
     call log_notice('IO module is initialized.')
 
-  end subroutine io_init
+  end subroutine fiona_init
 
-  subroutine io_create_dataset(name, desc, file_prefix, file_path, mode, time_step_size, mute)
+  subroutine fiona_create_dataset(name, desc, file_prefix, file_path, mode, time_step_size, mute)
 
     character(*), intent(in) :: name
     character(*), intent(in), optional :: desc
@@ -178,7 +178,7 @@ contains
     if (mode_ == 'input') then
       inquire(file=file_path_, exist=is_exist)
       if (.not. is_exist) then
-        call log_error('io_create_dataset: Input file "' // trim(file_path_) // '" does not exist!')
+        call log_error('fiona_create_dataset: Input file "' // trim(file_path_) // '" does not exist!')
       end if
     end if
 
@@ -209,9 +209,9 @@ contains
       call log_notice('Create ' // trim(dataset%mode) // ' dataset ' // trim(dataset%file_prefix) // '.')
     end if
 
-  end subroutine io_create_dataset
+  end subroutine fiona_create_dataset
 
-  subroutine io_add_att(dataset_name, name, value)
+  subroutine fiona_add_att(dataset_name, name, value)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -223,9 +223,9 @@ contains
 
     call dataset%atts%insert(name, value)
 
-  end subroutine io_add_att
+  end subroutine fiona_add_att
 
-  subroutine io_add_dim(dataset_name, name, long_name, units, size, add_var)
+  subroutine fiona_add_dim(dataset_name, name, long_name, units, size, add_var)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -279,13 +279,13 @@ contains
             dim%units = units
           end select
         end if
-        call io_add_var(dataset_name, name, long_name=dim%long_name, units=dim%units, dim_names=[name], data_type='real(8)')
+        call fiona_add_var(dataset_name, name, long_name=dim%long_name, units=dim%units, dim_names=[name], data_type='real(8)')
       end if
     end if
 
-  end subroutine io_add_dim
+  end subroutine fiona_add_dim
 
-  subroutine io_add_var(dataset_name, name, long_name, units, dim_names, data_type, missing_value)
+  subroutine fiona_add_var(dataset_name, name, long_name, units, dim_names, data_type, missing_value)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -361,9 +361,9 @@ contains
 
     if (name == 'Time' .or. name == 'time') dataset%time_var => dataset%get_var(name)
 
-  end subroutine io_add_var
+  end subroutine fiona_add_var
 
-  logical function io_has_var(dataset_name, var_name) result(res)
+  logical function fiona_has_var(dataset_name, var_name) result(res)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
@@ -376,9 +376,9 @@ contains
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     res = ierr == NF90_NOERR
 
-  end function io_has_var
+  end function fiona_has_var
 
-  subroutine io_start_output(dataset_name, time_in_seconds, new_file, tag)
+  subroutine fiona_start_output(dataset_name, time_in_seconds, new_file, tag)
 
     character(*), intent(in) :: dataset_name
     real(8), intent(in), optional :: time_in_seconds
@@ -403,7 +403,7 @@ contains
 
     if (present(tag)) then
       if (dataset%file_path /= 'N/A') then
-        file_path = trim(string_delete(dataset%file_path, '.nc')) // '.' // trim(tag) // '.nc'
+        file_path = trim(delete_string(dataset%file_path, '.nc')) // '.' // trim(tag) // '.nc'
       else
         write(file_path, "(A, '.', A, '.nc')") trim(dataset%file_prefix), trim(tag)
       end if
@@ -496,9 +496,9 @@ contains
       call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
     end if
 
-  end subroutine io_start_output
+  end subroutine fiona_start_output
 
-  subroutine io_output_0d(dataset_name, name, value)
+  subroutine fiona_output_0d(dataset_name, name, value)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -529,9 +529,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine io_output_0d
+  end subroutine fiona_output_0d
 
-  subroutine io_output_1d(dataset_name, name, array)
+  subroutine fiona_output_1d(dataset_name, name, array)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -577,9 +577,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine io_output_1d
+  end subroutine fiona_output_1d
 
-  subroutine io_output_2d(dataset_name, name, array)
+  subroutine fiona_output_2d(dataset_name, name, array)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -621,9 +621,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine io_output_2d
+  end subroutine fiona_output_2d
 
-  subroutine io_output_3d(dataset_name, name, array)
+  subroutine fiona_output_3d(dataset_name, name, array)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -665,9 +665,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine io_output_3d
+  end subroutine fiona_output_3d
 
-  subroutine io_output_4d(dataset_name, name, array)
+  subroutine fiona_output_4d(dataset_name, name, array)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -711,9 +711,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine io_output_4d
+  end subroutine fiona_output_4d
   
-  subroutine io_output_5d(dataset_name, name, array)
+  subroutine fiona_output_5d(dataset_name, name, array)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -759,9 +759,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine io_output_5d
+  end subroutine fiona_output_5d
 
-  subroutine io_end_output(dataset_name)
+  subroutine fiona_end_output(dataset_name)
 
     character(*), intent(in) :: dataset_name
 
@@ -773,9 +773,9 @@ contains
     ierr = NF90_CLOSE(dataset%id)
     call handle_error(ierr, 'Failed to close dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
-  end subroutine io_end_output
+  end subroutine fiona_end_output
 
-  subroutine io_start_input(dataset_name)
+  subroutine fiona_start_input(dataset_name)
 
     character(*), intent(in) :: dataset_name
 
@@ -787,9 +787,9 @@ contains
     ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
     call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // ' to input!', __FILE__, __LINE__)
 
-  end subroutine io_start_input
+  end subroutine fiona_start_input
 
-  subroutine io_get_dim(dataset_name, name, size)
+  subroutine fiona_get_dim(dataset_name, name, size)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -827,9 +827,9 @@ contains
     end if
     if (present(size)) size = dim%size
 
-  end subroutine io_get_dim
+  end subroutine fiona_get_dim
 
-  subroutine io_get_att_str(dataset_name, att_name, value)
+  subroutine fiona_get_att_str(dataset_name, att_name, value)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: att_name
@@ -843,9 +843,9 @@ contains
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-  end subroutine io_get_att_str
+  end subroutine fiona_get_att_str
 
-  subroutine io_get_var_att_str(dataset_name, var_name, att_name, value)
+  subroutine fiona_get_var_att_str(dataset_name, var_name, att_name, value)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
@@ -885,9 +885,9 @@ contains
     end if
     call handle_error(ierr, 'Failed to get attribute "' // trim(att_name) // '" of variable "' // trim(var_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-  end subroutine io_get_var_att_str
+  end subroutine fiona_get_var_att_str
 
-  subroutine io_get_att_i4(dataset_name, att_name, value)
+  subroutine fiona_get_att_i4(dataset_name, att_name, value)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: att_name
@@ -901,9 +901,9 @@ contains
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-  end subroutine io_get_att_i4
+  end subroutine fiona_get_att_i4
 
-  subroutine io_get_att_i8(dataset_name, att_name, value)
+  subroutine fiona_get_att_i8(dataset_name, att_name, value)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: att_name
@@ -917,9 +917,9 @@ contains
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-  end subroutine io_get_att_i8
+  end subroutine fiona_get_att_i8
 
-  subroutine io_get_att_r4(dataset_name, att_name, value)
+  subroutine fiona_get_att_r4(dataset_name, att_name, value)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: att_name
@@ -933,9 +933,9 @@ contains
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-  end subroutine io_get_att_r4
+  end subroutine fiona_get_att_r4
 
-  subroutine io_get_att_r8(dataset_name, att_name, value)
+  subroutine fiona_get_att_r8(dataset_name, att_name, value)
 
     character(*), intent(in)  :: dataset_name
     character(*), intent(in)  :: att_name
@@ -949,9 +949,9 @@ contains
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-  end subroutine io_get_att_r8
+  end subroutine fiona_get_att_r8
 
-  subroutine io_input_0d(dataset_name, var_name, value, time_step)
+  subroutine fiona_input_0d(dataset_name, var_name, value, time_step)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
@@ -989,9 +989,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
-  end subroutine io_input_0d
+  end subroutine fiona_input_0d
   
-  subroutine io_input_1d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_1d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
@@ -1029,9 +1029,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
-  end subroutine io_input_1d
+  end subroutine fiona_input_1d
 
-  subroutine io_input_2d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_2d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
@@ -1069,9 +1069,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
-  end subroutine io_input_2d
+  end subroutine fiona_input_2d
 
-  subroutine io_input_3d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_3d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
@@ -1109,9 +1109,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
-  end subroutine io_input_3d
+  end subroutine fiona_input_3d
 
-  subroutine io_input_4d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_4d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
@@ -1149,9 +1149,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
-  end subroutine io_input_4d
+  end subroutine fiona_input_4d
   
-  subroutine io_input_5d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_5d(dataset_name, var_name, array, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
@@ -1189,9 +1189,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to read variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
 
-  end subroutine io_input_5d
+  end subroutine fiona_input_5d
 
-  subroutine io_end_input(dataset_name)
+  subroutine fiona_end_input(dataset_name)
 
     character(*), intent(in) :: dataset_name
 
@@ -1203,7 +1203,7 @@ contains
     ierr = NF90_CLOSE(dataset%id)
     call handle_error(ierr, 'Failed to end input!', __FILE__, __LINE__)
 
-  end subroutine io_end_input
+  end subroutine fiona_end_input
 
   function get_dataset(dataset_name, mode) result(res)
 
@@ -1278,4 +1278,4 @@ contains
 
   end subroutine handle_error
 
-end module io_mod
+end module fiona_mod

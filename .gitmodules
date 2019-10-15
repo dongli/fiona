@@ -4,3 +4,6 @@
 [submodule "lib/flogger"]
 	path = lib/flogger
 	url = https://github.com/dongli/flogger
+[submodule "lib/string"]
+	path = lib/string
+	url = https://github.com/dongli/fortran-string

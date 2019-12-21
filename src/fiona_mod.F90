@@ -23,6 +23,7 @@ module fiona_mod
   public fiona_get_att
   public fiona_input
   public fiona_end_input
+  public fiona_quick_output
 
   type dataset_type
     integer :: id = -1
@@ -96,6 +97,11 @@ module fiona_mod
     module procedure fiona_input_4d
     module procedure fiona_input_5d
   end interface fiona_input
+
+  interface fiona_quick_output
+    module procedure fiona_quick_output_1d_r8
+    module procedure fiona_quick_output_2d_r8
+  end interface fiona_quick_output
 
   character(30) time_units_str
   character(30) start_time_str
@@ -323,13 +329,13 @@ contains
       end select
     else
       select case (data_type)
-      case ('real', 'real(4)')
+      case ('real', 'real(4)', 'r4')
         var%data_type = NF90_FLOAT
-      case ('real(8)')
+      case ('real(8)', 'r8')
         var%data_type = NF90_DOUBLE
-      case ('integer', 'integer(4)')
+      case ('integer', 'integer(4)', 'i4')
         var%data_type = NF90_INT
-      case ('integer(8)')
+      case ('integer(8)', 'i8')
         var%data_type = NF90_INT64
       case default
         call log_error('Unknown data type ' // trim(data_type) // ' for variable ' // trim(name) // '!')
@@ -354,7 +360,7 @@ contains
         call iter%next()
       end do
       if (.not. found) then
-        call log_error('Unknown dimension ' // trim(dim_names(i)) // ' for variable ' // trim(name) // '!')
+        call log_error('Unknown dimension ' // trim(dim_names(i)) // ' for variable ' // trim(name) // '!', __FILE__, __LINE__)
       end if
     end do
 
@@ -379,11 +385,12 @@ contains
 
   end function fiona_has_var
 
-  subroutine fiona_start_output(dataset_name, time_in_seconds, new_file, tag)
+  subroutine fiona_start_output(dataset_name, time_in_seconds, new_file, append, tag)
 
     character(*), intent(in) :: dataset_name
     real(8), intent(in), optional :: time_in_seconds
     logical, intent(in), optional :: new_file
+    logical, intent(in), optional :: append
     character(*), intent(in), optional :: tag
 
     character(256) file_path
@@ -391,16 +398,9 @@ contains
     type(hash_table_iterator_type) iter
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
-    logical new_file_
     integer i, ierr, dimids(10)
 
     dataset => get_dataset(dataset_name, mode='output')
-
-    if (present(new_file)) then
-      new_file_ = new_file
-    else
-      new_file_ = .true.
-    end if
 
     if (present(tag)) then
       if (dataset%file_path /= 'N/A') then
@@ -416,8 +416,8 @@ contains
       end if
     end if
 
-    call apply_dataset_to_netcdf(file_path, dataset, dataset%time_step == 0 .or. new_file_)
-    
+    call apply_dataset_to_netcdf(file_path, dataset, new_file, append)
+
     ! Write time dimension variable.
     if (associated(dataset%time_var)) then
       if (.not. present(time_in_seconds)) then
@@ -434,18 +434,31 @@ contains
 
   end subroutine fiona_start_output
 
-  subroutine apply_dataset_to_netcdf(file_path, dataset, new_file)
+  subroutine apply_dataset_to_netcdf(file_path, dataset, new_file, append)
 
     character(*), intent(in) :: file_path
     type(dataset_type), intent(inout) :: dataset
-    logical, intent(in) :: new_file
+    logical, intent(in), optional :: new_file
+    logical, intent(in), optional :: append
 
     type(hash_table_iterator_type) iter
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
-    integer i, ierr, dimids(10)
+    integer i, ierr, id, dimids(10)
+    logical new_file_, append_
 
-    if (new_file) then
+    if (present(new_file)) then
+      new_file_ = new_file
+    else
+      new_file_ = .true.
+    end if
+    if (present(append)) then
+      append_ = append
+    else
+      append_ = .false.
+    end if
+
+    if (new_file_) then
       ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
       call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
     else
@@ -478,32 +491,38 @@ contains
     iter = hash_table_iterator(dataset%dims)
     do while (.not. iter%ended())
       dim => dataset%get_dim(iter%key)
-      ierr = NF90_DEF_DIM(dataset%id, dim%name, dim%size, dim%id)
-      call handle_error(ierr, 'Failed to define dimension ' // trim(dim%name) // '!', __FILE__, __LINE__)
+      ierr = NF90_INQ_DIMID(dataset%id, dim%name, id)
+      if (.not. (ierr == NF90_NOERR .and. append_)) then
+        ierr = NF90_DEF_DIM(dataset%id, dim%name, dim%size, dim%id)
+        call handle_error(ierr, 'Failed to define dimension ' // trim(dim%name) // '!', __FILE__, __LINE__)
+      end if
       call iter%next()
     end do
 
     iter = hash_table_iterator(dataset%vars)
     do while (.not. iter%ended())
       var => dataset%get_var(iter%key)
-      do i = 1, size(var%dims)
-        dimids(i) = var%dims(i)%ptr%id
-      end do
-      ierr = NF90_DEF_VAR(dataset%id, var%name, var%data_type, dimids(1:size(var%dims)), var%id)
-      call handle_error(ierr, 'Failed to define variable ' // trim(var%name) // '!', __FILE__, __LINE__)
-      ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
-      ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
-      if (associated(var%missing_value)) then
-        select type (missing_value => var%missing_value)
-        type is (integer(4))
-          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-        type is (integer(8))
-          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-        type is (real(4))
-          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-        type is (real(8))
-          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-        end select
+      ierr = NF90_INQ_VARID(dataset%id, var%name, id)
+      if (.not. (ierr == NF90_NOERR .and. append_)) then
+        do i = 1, size(var%dims)
+          dimids(i) = var%dims(i)%ptr%id
+        end do
+        ierr = NF90_DEF_VAR(dataset%id, var%name, var%data_type, dimids(1:size(var%dims)), var%id)
+        call handle_error(ierr, 'Failed to define variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+        ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
+        ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
+        if (associated(var%missing_value)) then
+          select type (missing_value => var%missing_value)
+          type is (integer(4))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+          type is (integer(8))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+          type is (real(4))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+          type is (real(8))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+          end select
+        end if
       end if
       call iter%next()
     end do
@@ -511,7 +530,7 @@ contains
     ierr = NF90_ENDDEF(dataset%id)
     call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
 
-    if (new_file) then
+    if (new_file_) then
       dataset%time_step = 0 ! Reset to zero!
       dataset%last_file_path = file_path
     end if
@@ -900,7 +919,6 @@ contains
       do i = 1, num_att
         ierr = NF90_INQ_ATTNAME(dataset%id, var%id, i, name)
         call handle_error(ierr, 'Failed to inquire attribute name of variable "' // trim(var_name) // '"!', __FILE__, __LINE__)
-        print *, '- ', trim(name)
       end do
     end if
     call handle_error(ierr, 'Failed to get attribute "' // trim(att_name) // '" of variable "' // trim(var_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
@@ -1224,6 +1242,137 @@ contains
     call handle_error(ierr, 'Failed to end input!', __FILE__, __LINE__)
 
   end subroutine fiona_end_input
+
+  subroutine fiona_quick_output_1d_r8(dataset_name, var_name, dim_names, array, long_name, units, file_prefix, time_in_seconds, new_file)
+
+    character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: var_name
+    character(*), intent(in) :: dim_names(:)
+    real(8), intent(in) :: array(:)
+    character(*), intent(in), optional :: long_name
+    character(*), intent(in), optional :: units
+    character(*), intent(in), optional :: file_prefix
+    real(8), intent(in), optional :: time_in_seconds
+    logical, intent(in), optional :: new_file
+
+    type(dataset_type), pointer :: dataset
+    character(:), allocatable :: long_name_
+    character(:), allocatable :: units_
+    character(:), allocatable :: file_prefix_
+    logical append, new_file_
+
+    if (present(long_name)) then
+      long_name_ = long_name
+    else
+      long_name_ = var_name
+    end if
+    if (present(units)) then
+      units_ = units
+    else
+      units_ = ''
+    end if
+    if (present(file_prefix)) then
+      file_prefix_ = file_prefix
+    else
+      file_prefix_ = dataset_name
+    end if
+
+    if (datasets%hashed(trim(dataset_name) // '.output')) then
+      dataset => get_dataset(dataset_name, mode='output')
+      if (.not. dataset%dims%hashed(dim_names(1))) then
+        call fiona_add_dim(dataset_name, dim_names(1), size=size(array, 1))
+      end if
+      if (.not. dataset%vars%hashed(var_name)) then
+        call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
+      end if
+      append = .true.
+      if (present(new_file)) then
+        new_file_ = new_file
+      else
+        new_file_ = .false.
+      end if
+    else
+      call fiona_create_dataset(dataset_name, 'Fiona quick output', file_prefix=file_prefix_, mode='output', mute=.true.)
+      if (present(time_in_seconds)) call fiona_add_dim(dataset_name, 'time', add_var=.true.)
+      call fiona_add_dim(dataset_name, dim_names(1), size=size(array, 1))
+      call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
+      append = .false.
+      new_file_ = .true.
+    end if
+
+    call fiona_start_output(dataset_name, time_in_seconds, new_file_, append)
+    call fiona_output(dataset_name, var_name, array)
+    call fiona_end_output(dataset_name)
+
+  end subroutine fiona_quick_output_1d_r8
+
+  subroutine fiona_quick_output_2d_r8(dataset_name, var_name, dim_names, array, long_name, units, file_prefix, time_in_seconds, new_file)
+
+    character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: var_name
+    character(*), intent(in) :: dim_names(:)
+    real(8), intent(in) :: array(:,:)
+    character(*), intent(in), optional :: long_name
+    character(*), intent(in), optional :: units
+    character(*), intent(in), optional :: file_prefix
+    real(8), intent(in), optional :: time_in_seconds
+    logical, intent(in), optional :: new_file
+
+    type(dataset_type), pointer :: dataset
+    character(:), allocatable :: long_name_
+    character(:), allocatable :: units_
+    character(:), allocatable :: file_prefix_
+    logical append, new_file_
+    integer i
+
+    if (present(long_name)) then
+      long_name_ = long_name
+    else
+      long_name_ = var_name
+    end if
+    if (present(units)) then
+      units_ = units
+    else
+      units_ = ''
+    end if
+    if (present(file_prefix)) then
+      file_prefix_ = file_prefix
+    else
+      file_prefix_ = dataset_name
+    end if
+
+    if (datasets%hashed(trim(dataset_name) // '.output')) then
+      dataset => get_dataset(dataset_name, mode='output')
+      do i = 1, 2
+        if (.not. dataset%dims%hashed(dim_names(i))) then
+          call fiona_add_dim(dataset_name, dim_names(i), size=size(array, i))
+        end if
+      end do
+      if (.not. dataset%vars%hashed(var_name)) then
+        call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
+      end if
+      append = .true.
+      if (present(new_file)) then
+        new_file_ = new_file
+      else
+        new_file_ = .false.
+      end if
+    else
+      call fiona_create_dataset(dataset_name, 'Fiona quick output', file_prefix=file_prefix_, mode='output', mute=.true.)
+      if (present(time_in_seconds)) call fiona_add_dim(dataset_name, 'time', add_var=.true.)
+      do i = 1, 2
+        call fiona_add_dim(dataset_name, dim_names(i), size=size(array, i))
+      end do
+      call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
+      append = .false.
+      new_file_ = .true.
+    end if
+
+    call fiona_start_output(dataset_name, time_in_seconds, new_file_, append)
+    call fiona_output(dataset_name, var_name, array)
+    call fiona_end_output(dataset_name)
+
+  end subroutine fiona_quick_output_2d_r8
 
   function get_dataset(dataset_name, mode) result(res)
 

@@ -138,14 +138,13 @@ contains
 
   end subroutine fiona_init
 
-  subroutine fiona_create_dataset(name, desc, file_prefix, file_path, mode, time_step_size, mute)
+  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, mode, mute)
 
-    character(*), intent(in) :: name
+    character(*), intent(in) :: dataset_name
     character(*), intent(in), optional :: desc
     character(*), intent(in), optional :: file_prefix
     character(*), intent(in), optional :: file_path
     character(*), intent(in), optional :: mode
-    real, intent(in), optional :: time_step_size
     logical, intent(in), optional :: mute
 
     character(10) mode_
@@ -174,6 +173,8 @@ contains
     else
       mode_ = 'output'
     end if
+    if (mode_ == 'r') mode_ = 'input'
+    if (mode_ == 'w') mode_ = 'output'
 
     if (mode_ == 'input') then
       inquire(file=file_path_, exist=is_exist)
@@ -182,17 +183,17 @@ contains
       end if
     end if
 
-    if (datasets%hashed(name)) then
-      call log_error('Already created dataset ' // trim(name) // '!')
+    if (datasets%hashed(dataset_name)) then
+      call log_error('Already created dataset ' // trim(dataset_name) // '!')
     end if
 
-    dataset%name = name
+    dataset%name = dataset_name
     dataset%desc = desc_
     dataset%atts = hash_table()
     dataset%dims = hash_table()
     dataset%vars = hash_table()
     if (file_prefix_ /= '' .and. file_path_ == '') then
-      dataset%file_prefix = trim(file_prefix_) // '.' // trim(name)
+      dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name)
     else if (file_prefix_ == '' .and. file_path_ /= '') then
       dataset%file_path = file_path_
     end if
@@ -415,72 +416,7 @@ contains
       end if
     end if
 
-    if (dataset%time_step == 0 .or. new_file_) then
-      ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
-      call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
-      ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'dataset', dataset%name)
-      ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'desc', dataset%desc)
-      ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'author', dataset%author)
-
-      iter = hash_table_iterator(dataset%atts)
-      do while (.not. iter%ended())
-        select type (value => iter%value)
-        type is (integer)
-          ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
-        type is (real(4))
-          ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
-        type is (real(8))
-          ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
-        type is (character(*))
-          ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
-        type is (logical)
-          ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, to_string(value))
-        end select
-        call iter%next()
-      end do
-
-      iter = hash_table_iterator(dataset%dims)
-      do while (.not. iter%ended())
-        dim => dataset%get_dim(iter%key)
-        ierr = NF90_DEF_DIM(dataset%id, dim%name, dim%size, dim%id)
-        call handle_error(ierr, 'Failed to define dimension ' // trim(dim%name) // '!', __FILE__, __LINE__)
-        call iter%next()
-      end do
-
-      iter = hash_table_iterator(dataset%vars)
-      do while (.not. iter%ended())
-        var => dataset%get_var(iter%key)
-        do i = 1, size(var%dims)
-          dimids(i) = var%dims(i)%ptr%id
-        end do
-        ierr = NF90_DEF_VAR(dataset%id, var%name, var%data_type, dimids(1:size(var%dims)), var%id)
-        call handle_error(ierr, 'Failed to define variable ' // trim(var%name) // '!', __FILE__, __LINE__)
-        ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
-        ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
-        if (associated(var%missing_value)) then
-          select type (missing_value => var%missing_value)
-          type is (integer(4))
-            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-          type is (integer(8))
-            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-          type is (real(4))
-            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-          type is (real(8))
-            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-          end select
-        end if
-        call iter%next()
-      end do
-
-      ierr = NF90_ENDDEF(dataset%id)
-      call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
-
-      dataset%time_step = 0 ! Reset to zero!
-      dataset%last_file_path = file_path
-    else
-      ierr = NF90_OPEN(dataset%last_file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
-      call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-    end if
+    call apply_dataset_to_netcdf(file_path, dataset, dataset%time_step == 0 .or. new_file_)
     
     ! Write time dimension variable.
     if (associated(dataset%time_var)) then
@@ -497,6 +433,90 @@ contains
     end if
 
   end subroutine fiona_start_output
+
+  subroutine apply_dataset_to_netcdf(file_path, dataset, new_file)
+
+    character(*), intent(in) :: file_path
+    type(dataset_type), intent(inout) :: dataset
+    logical, intent(in) :: new_file
+
+    type(hash_table_iterator_type) iter
+    type(dim_type), pointer :: dim
+    type(var_type), pointer :: var
+    integer i, ierr, dimids(10)
+
+    if (new_file) then
+      ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
+      call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
+    else
+      ierr = NF90_OPEN(dataset%last_file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
+      call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
+      ierr = NF90_REDEF(dataset%id)
+      call handle_error(ierr, 'Failed to enter definition mode!', __FILE__, __LINE__)
+    end if
+    ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'dataset', dataset%name)
+    ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'desc', dataset%desc)
+    ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'author', dataset%author)
+
+    iter = hash_table_iterator(dataset%atts)
+    do while (.not. iter%ended())
+      select type (value => iter%value)
+      type is (integer)
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
+      type is (real(4))
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
+      type is (real(8))
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
+      type is (character(*))
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
+      type is (logical)
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, to_string(value))
+      end select
+      call iter%next()
+    end do
+
+    iter = hash_table_iterator(dataset%dims)
+    do while (.not. iter%ended())
+      dim => dataset%get_dim(iter%key)
+      ierr = NF90_DEF_DIM(dataset%id, dim%name, dim%size, dim%id)
+      call handle_error(ierr, 'Failed to define dimension ' // trim(dim%name) // '!', __FILE__, __LINE__)
+      call iter%next()
+    end do
+
+    iter = hash_table_iterator(dataset%vars)
+    do while (.not. iter%ended())
+      var => dataset%get_var(iter%key)
+      do i = 1, size(var%dims)
+        dimids(i) = var%dims(i)%ptr%id
+      end do
+      ierr = NF90_DEF_VAR(dataset%id, var%name, var%data_type, dimids(1:size(var%dims)), var%id)
+      call handle_error(ierr, 'Failed to define variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+      ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
+      ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
+      if (associated(var%missing_value)) then
+        select type (missing_value => var%missing_value)
+        type is (integer(4))
+          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+        type is (integer(8))
+          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+        type is (real(4))
+          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+        type is (real(8))
+          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
+        end select
+      end if
+      call iter%next()
+    end do
+
+    ierr = NF90_ENDDEF(dataset%id)
+    call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
+
+    if (new_file) then
+      dataset%time_step = 0 ! Reset to zero!
+      dataset%last_file_path = file_path
+    end if
+
+  end subroutine apply_dataset_to_netcdf
 
   subroutine fiona_output_0d(dataset_name, name, value)
 

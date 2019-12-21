@@ -7,3 +7,6 @@
 [submodule "lib/string"]
 	path = lib/string
 	url = https://github.com/dongli/fortran-string
+[submodule "lib/unit-test"]
+	path = lib/unit-test
+	url = https://github.com/dongli/fortran-unit-test

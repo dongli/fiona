@@ -51,6 +51,9 @@ endif ()
 if (EXISTS ${PROJECT_SOURCE_DIR}/lib/string/CMakeLists.txt AND NOT parent_dir)
   add_subdirectory(lib/string)
 endif ()
+if (EXISTS ${PROJECT_SOURCE_DIR}/lib/unit-test/CMakeLists.txt AND NOT parent_dir)
+  add_subdirectory(lib/unit-test)
+endif ()
 
 set(sources
   src/fiona_mod.F90
@@ -62,5 +65,5 @@ target_link_libraries(fiona netcdf netcdff fortran_container flogger fortran_str
 
 if (NOT parent_dir)
   add_executable(fiona_test.exe src/fiona_test.F90)
-  target_link_libraries(fiona_test.exe fiona)
+  target_link_libraries(fiona_test.exe fiona fortran_unit_test)
 endif ()

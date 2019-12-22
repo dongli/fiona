@@ -4,6 +4,9 @@ module fiona_mod
   use flogger
   use string
   use hash_table_mod
+#ifdef HAS_MPI
+  use mpi
+#endif
 
   implicit none
 
@@ -11,6 +14,7 @@ module fiona_mod
 
   public fiona_init
   public fiona_create_dataset
+  public fiona_open_dataset
   public fiona_add_att
   public fiona_add_dim
   public fiona_add_var
@@ -39,6 +43,16 @@ module fiona_mod
     type(hash_table_type) dims
     type(hash_table_type) vars
     integer :: time_step = 0
+    ! --------------------------------------------------------------------------
+    ! Parallel IO
+    integer :: mpi_comm = -1
+    integer num_proc
+    integer proc_id
+    ! Parallel input for serial files
+    character(256), allocatable :: file_paths(:)
+    character(30) :: variant_dim = 'N/A'
+    integer file_start_idx, file_end_idx
+    ! --------------------------------------------------------------------------
   contains
     procedure :: get_dim => get_dim_from_dataset
     procedure :: get_var => get_var_from_dataset
@@ -140,8 +154,6 @@ contains
 
     datasets = hash_table()
 
-    call log_notice('IO module is initialized.')
-
   end subroutine fiona_init
 
   subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, mode, mute)
@@ -217,6 +229,66 @@ contains
     end if
 
   end subroutine fiona_create_dataset
+
+  subroutine fiona_open_dataset(dataset_name, file_paths, parallel, mpi_comm, variant_dim)
+
+    character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: file_paths(:)
+    logical, intent(in), optional :: parallel
+    integer, intent(in), optional :: mpi_comm
+    character(*), intent(in), optional :: variant_dim
+
+    type(dataset_type) dataset
+    integer ierr, tmp_id, unlimited_dimid, n1, n2, n3, i
+
+    if (datasets%hashed(dataset_name)) then
+      call log_error('Already created dataset ' // trim(dataset_name) // '!')
+    end if
+
+    dataset%name = dataset_name
+    dataset%atts = hash_table()
+    dataset%dims = hash_table()
+    dataset%vars = hash_table()
+    dataset%file_paths = file_paths
+    dataset%mode = 'input'
+
+#ifdef HAS_MPI
+    if (present(parallel) .and. present(mpi_comm)) then
+      if (parallel) then
+        dataset%mpi_comm = mpi_comm
+        ! Partition the files to each process.
+        call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
+        call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
+        n1 = size(file_paths) / dataset%num_proc
+        n2 = mod(size(file_paths), dataset%num_proc)
+        n3 = merge(n1 + 1, n1, dataset%proc_id < n2)
+        dataset%file_start_idx = 1
+        do i = 0, dataset%proc_id - 1
+          dataset%file_start_idx = dataset%file_start_idx + merge(n1 + 1, n1, i < n2)
+        end do
+        dataset%file_end_idx = dataset%file_start_idx + n3 - 1
+      end if
+      ! Check unlimited dimension for parallelizing.
+      ierr = NF90_OPEN(file_paths(1), NF90_NOWRITE + NF90_64BIT_OFFSET, tmp_id)
+      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+      ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
+      call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+      if (unlimited_dimid == -1) then
+        if (present(variant_dim)) then
+          dataset%variant_dim = variant_dim
+        else
+          call log_error('There is no unlimited dimension in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+        end if
+      else
+        ierr = NF90_INQUIRE_DIMENSION(tmp_id, unlimited_dimid, name=dataset%variant_dim)
+        call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+      end if
+    end if
+#endif
+
+    call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
+
+  end subroutine fiona_open_dataset
 
   subroutine fiona_add_att(dataset_name, name, value)
 
@@ -814,25 +886,33 @@ contains
 
   end subroutine fiona_end_output
 
-  subroutine fiona_start_input(dataset_name)
+  subroutine fiona_start_input(dataset_name, file_idx)
 
     character(*), intent(in) :: dataset_name
+    integer, intent(in), optional :: file_idx
 
     type(dataset_type), pointer :: dataset
     integer ierr
 
     dataset => get_dataset(dataset_name, mode='input')
 
-    ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
-    call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // ' to input!', __FILE__, __LINE__)
+    if (present(file_idx)) then
+      ierr = NF90_OPEN(dataset%file_paths(file_idx), NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
+      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_paths(1)) // '"!', __FILE__, __LINE__)
+    else
+      ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
+      call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // ' to input!', __FILE__, __LINE__)
+    end if
 
   end subroutine fiona_start_input
 
-  subroutine fiona_get_dim(dataset_name, name, size)
+  subroutine fiona_get_dim(dataset_name, name, size, start_idx, end_idx)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     integer, intent(out), optional :: size
+    integer, intent(out), optional :: start_idx
+    integer, intent(out), optional :: end_idx
 
     type(dataset_type), pointer :: dataset
     type(dim_type), pointer :: dim
@@ -852,8 +932,13 @@ contains
       dim => dataset%get_dim(name)
 
       ! Temporally open the data file.
-      ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, temp_id)
-      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      if (dataset%mpi_comm /= -1) then
+        ierr = NF90_OPEN(trim(dataset%file_paths(1)), NF90_NOWRITE + NF90_64BIT_OFFSET, temp_id)
+        call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_paths(1)) // '"!', __FILE__, __LINE__)
+      else
+        ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, temp_id)
+        call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      end if
 
       ierr = NF90_INQ_DIMID(temp_id, name, dimid)
       call handle_error(ierr, 'Failed to inquire dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
@@ -862,9 +947,15 @@ contains
       call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
       ierr = NF90_CLOSE(temp_id)
-      call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      if (dataset%mpi_comm /= -1) then
+        call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_paths(1)) // '"!', __FILE__, __LINE__)
+      else
+        call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      end if
     end if
     if (present(size)) size = dim%size
+    if (present(start_idx)) start_idx = dataset%file_start_idx
+    if (present(end_idx)) end_idx = dataset%file_end_idx
 
   end subroutine fiona_get_dim
 
@@ -1029,11 +1120,13 @@ contains
 
   end subroutine fiona_input_0d
   
-  subroutine fiona_input_1d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_1d(dataset_name, var_name, array, start, count, time_step)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
     class(*), intent(out) :: array(:)
+    integer, intent(in), optional :: start
+    integer, intent(in), optional :: count
     integer, intent(in), optional :: time_step
 
     type(dataset_type), pointer :: dataset
@@ -1046,21 +1139,45 @@ contains
     select type (array)
     type is (integer)
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[start,time_step], count=[count,1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[start], count=[count])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(4))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[start,time_step], count=[count,1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[start], count=[count])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(8))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[start,time_step], count=[count,1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,time_step], count=[size(array),1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, start=[start], count=[count])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1069,11 +1186,13 @@ contains
 
   end subroutine fiona_input_1d
 
-  subroutine fiona_input_2d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_2d(dataset_name, var_name, array, start, count, time_step)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: var_name
     class(*), intent(out) :: array(:,:)
+    integer, intent(in), optional :: start(2)
+    integer, intent(in), optional :: count(2)
     integer, intent(in), optional :: time_step
 
     type(dataset_type), pointer :: dataset
@@ -1086,21 +1205,60 @@ contains
     select type (array)
     type is (integer)
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,time_step], count=[size(array, 1),size(array, 2),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, &
+            start=[start(1),start(2),time_step],        &
+            count=[count(1),count(2),time_step])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,      &
+            start=[             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),        1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, &
+            start=[start(1),start(2)], count=[count(1),count(2)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(4))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,time_step], count=[size(array, 1),size(array, 2),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, &
+            start=[start(1),start(2),time_step],        &
+            count=[count(1),count(2),time_step])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,      &
+            start=[             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),        1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, &
+            start=[start(1),start(2)], count=[count(1),count(2)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(8))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,time_step], count=[size(array, 1),size(array, 2),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, &
+            start=[start(1),start(2),time_step],        &
+            count=[count(1),count(2),time_step])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,      &
+            start=[             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),        1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array, &
+            start=[start(1),start(2)], count=[count(1),count(2)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1109,11 +1267,13 @@ contains
 
   end subroutine fiona_input_2d
 
-  subroutine fiona_input_3d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_3d(dataset_name, var_name, array, start, count, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:)
+    integer     , intent(in ), optional :: start(3)
+    integer     , intent(in ), optional :: count(3)
     integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
@@ -1126,21 +1286,63 @@ contains
     select type (array)
     type is (integer)
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,   &
+            start=[start(1),start(2),start(3),time_step], &
+            count=[count(1),count(2),count(3),time_step])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                     &
+            start=[             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),         1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,   &
+            start=[start(1),start(2),start(3)],           &
+            count=[count(1),count(2),count(3)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(4))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,   &
+            start=[start(1),start(2),start(3),time_step], &
+            count=[count(1),count(2),count(3),time_step])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                     &
+            start=[             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),         1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,   &
+            start=[start(1),start(2),start(3)],           &
+            count=[count(1),count(2),count(3)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(8))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,   &
+            start=[start(1),start(2),start(3),time_step], &
+            count=[count(1),count(2),count(3),time_step])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                     &
+            start=[             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),         1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,   &
+            start=[start(1),start(2),start(3)],           &
+            count=[count(1),count(2),count(3)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1149,11 +1351,13 @@ contains
 
   end subroutine fiona_input_3d
 
-  subroutine fiona_input_4d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_4d(dataset_name, var_name, array, start, count, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:,:)
+    integer     , intent(in ), optional :: start(4)
+    integer     , intent(in ), optional :: count(4)
     integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
@@ -1166,21 +1370,63 @@ contains
     select type (array)
     type is (integer)
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,            &
+            start=[start(1),start(2),start(3),start(4),time_step], &
+            count=[count(1),count(2),count(3),count(4),        1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                                    &
+            start=[             1,             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),        1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,  &
+            start=[start(1),start(2),start(3),start(4)], &
+            count=[count(1),count(2),count(3),count(4)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(4))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,            &
+            start=[start(1),start(2),start(3),start(4),time_step], &
+            count=[count(1),count(2),count(3),count(4),        1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                                    &
+            start=[             1,             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),        1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,  &
+            start=[start(1),start(2),start(3),start(4)], &
+            count=[count(1),count(2),count(3),count(4)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(8))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,            &
+            start=[start(1),start(2),start(3),start(4),time_step], &
+            count=[count(1),count(2),count(3),count(4),        1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                                    &
+            start=[             1,             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),        1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,  &
+            start=[start(1),start(2),start(3),start(4)], &
+            count=[count(1),count(2),count(3),count(4)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1189,11 +1435,13 @@ contains
 
   end subroutine fiona_input_4d
   
-  subroutine fiona_input_5d(dataset_name, var_name, array, time_step)
+  subroutine fiona_input_5d(dataset_name, var_name, array, start, count, time_step)
 
     character(*), intent(in ) :: dataset_name
     character(*), intent(in ) :: var_name
     class    (*), intent(out) :: array(:,:,:,:,:)
+    integer     , intent(in ), optional :: start(5)
+    integer     , intent(in ), optional :: count(5)
     integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
@@ -1206,21 +1454,63 @@ contains
     select type (array)
     type is (integer)
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                     &
+            start=[start(1),start(2),start(3),start(4),start(5),time_step], &
+            count=[count(1),count(2),count(3),count(4),count(5),        1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                                                   &
+            start=[             1,             1,             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,           &
+            start=[start(1),start(2),start(3),start(4),start(5)], &
+            count=[count(1),count(2),count(3),count(4),count(5)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(4))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                     &
+            start=[start(1),start(2),start(3),start(4),start(5),time_step], &
+            count=[count(1),count(2),count(3),count(4),count(5),        1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                                                   &
+            start=[             1,             1,             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,           &
+            start=[start(1),start(2),start(3),start(4),start(5)], &
+            count=[count(1),count(2),count(3),count(4),count(5)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     type is (real(8))
       if (present(time_step)) then
-        ierr = NF90_GET_VAR(dataset%id, varid, array, start=[1,1,1,1,1,time_step], count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                     &
+            start=[start(1),start(2),start(3),start(4),start(5),time_step], &
+            count=[count(1),count(2),count(3),count(4),count(5),        1])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array,                                                   &
+            start=[             1,             1,             1,             1,             1,time_step], &
+            count=[size(array, 1),size(array, 2),size(array, 3),size(array, 4),size(array, 5),1])
+        end if
       else
-        ierr = NF90_GET_VAR(dataset%id, varid, array)
+        if (present(start) .and. present(count)) then
+          ierr = NF90_GET_VAR(dataset%id, varid, array,           &
+            start=[start(1),start(2),start(3),start(4),start(5)], &
+            count=[count(1),count(2),count(3),count(4),count(5)])
+        else
+          ierr = NF90_GET_VAR(dataset%id, varid, array)
+        end if
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)

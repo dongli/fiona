@@ -107,19 +107,19 @@ real(8), allocatable :: f(:,:,:) ! with dimensions x, y, time (the variant dimen
 
 ! Set sorted paths.
 
-call fiona_init(mpi_comm)
+call fiona_init()
 
-call fiona_create_dataset('h0', file_paths=paths, mode='r', parallel=.true.)
+call fiona_open_dataset('h0', file_paths=paths, mode='r', parallel=.true., mpi_com=mpi_comm)
 call fiona_get_dim('h0', 'x', size=num_x)
 call fiona_get_dim('h0', 'y', size=num_y)
-call fiona_get_dim('h0', 'time', start=time_start_idx, end=time_end_idx)
+call fiona_get_dim('h0', 'time', start_idx=time_start_idx, end_idx=time_end_idx)
 allocate(f(num_x,num_y,time_start_idx:time_end_idx))
-call fiona_start_input('h0')
 ! Read time series (maybe partial of the file), each process reads its assigned partition.
 do time_idx = time_start_idx, time_end_idx
-  call fiona_input('h0', 'f', f(:,:,time_idx), variant_dim_idx=time_idx, ...)
+  call fiona_start_input('h0', file_idx=time_idx)
+  call fiona_input('h0', 'f', f(:,:,time_idx))
+  call fiona_end_input('h0')
 end do
-call fiona_end_input('h0')
 ! By now, each process should already get data for its partition.
 ! Do some calculation, and reduce the results to root process or all processes.
 ```

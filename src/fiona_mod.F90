@@ -457,12 +457,11 @@ contains
 
   end function fiona_has_var
 
-  subroutine fiona_start_output(dataset_name, time_in_seconds, new_file, append, tag)
+  subroutine fiona_start_output(dataset_name, time_in_seconds, new_file, tag)
 
     character(*), intent(in) :: dataset_name
     real(8), intent(in), optional :: time_in_seconds
     logical, intent(in), optional :: new_file
-    logical, intent(in), optional :: append
     character(*), intent(in), optional :: tag
 
     character(256) file_path
@@ -488,7 +487,7 @@ contains
       end if
     end if
 
-    call apply_dataset_to_netcdf(file_path, dataset, new_file, append)
+    call apply_dataset_to_netcdf(file_path, dataset, new_file)
 
     ! Write time dimension variable.
     if (associated(dataset%time_var)) then
@@ -517,17 +516,12 @@ contains
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
     integer i, ierr, id, dimids(10)
-    logical new_file_, append_
+    logical new_file_
 
     if (present(new_file)) then
       new_file_ = new_file
     else
       new_file_ = .true.
-    end if
-    if (present(append)) then
-      append_ = append
-    else
-      append_ = .false.
     end if
 
     if (new_file_) then
@@ -564,7 +558,7 @@ contains
     do while (.not. iter%ended())
       dim => dataset%get_dim(iter%key)
       ierr = NF90_INQ_DIMID(dataset%id, dim%name, id)
-      if (.not. (ierr == NF90_NOERR .and. append_)) then
+      if (ierr /= NF90_NOERR) then
         ierr = NF90_DEF_DIM(dataset%id, dim%name, dim%size, dim%id)
         call handle_error(ierr, 'Failed to define dimension ' // trim(dim%name) // '!', __FILE__, __LINE__)
       end if
@@ -575,7 +569,7 @@ contains
     do while (.not. iter%ended())
       var => dataset%get_var(iter%key)
       ierr = NF90_INQ_VARID(dataset%id, var%name, id)
-      if (.not. (ierr == NF90_NOERR .and. append_)) then
+      if (ierr /= NF90_NOERR) then
         do i = 1, size(var%dims)
           dimids(i) = var%dims(i)%ptr%id
         end do
@@ -1549,7 +1543,7 @@ contains
     character(:), allocatable :: long_name_
     character(:), allocatable :: units_
     character(:), allocatable :: file_prefix_
-    logical append, new_file_
+    logical new_file_
 
     if (present(long_name)) then
       long_name_ = long_name
@@ -1575,7 +1569,6 @@ contains
       if (.not. dataset%vars%hashed(var_name)) then
         call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
       end if
-      append = .true.
       if (present(new_file)) then
         new_file_ = new_file
       else
@@ -1586,11 +1579,10 @@ contains
       if (present(time_in_seconds)) call fiona_add_dim(dataset_name, 'time', add_var=.true.)
       call fiona_add_dim(dataset_name, dim_names(1), size=size(array, 1))
       call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
-      append = .false.
       new_file_ = .true.
     end if
 
-    call fiona_start_output(dataset_name, time_in_seconds, new_file_, append)
+    call fiona_start_output(dataset_name, time_in_seconds, new_file_)
     call fiona_output(dataset_name, var_name, array)
     call fiona_end_output(dataset_name)
 
@@ -1612,7 +1604,7 @@ contains
     character(:), allocatable :: long_name_
     character(:), allocatable :: units_
     character(:), allocatable :: file_prefix_
-    logical append, new_file_
+    logical new_file_
     integer i
 
     if (present(long_name)) then
@@ -1641,7 +1633,6 @@ contains
       if (.not. dataset%vars%hashed(var_name)) then
         call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
       end if
-      append = .true.
       if (present(new_file)) then
         new_file_ = new_file
       else
@@ -1654,11 +1645,10 @@ contains
         call fiona_add_dim(dataset_name, dim_names(i), size=size(array, i))
       end do
       call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
-      append = .false.
       new_file_ = .true.
     end if
 
-    call fiona_start_output(dataset_name, time_in_seconds, new_file_, append)
+    call fiona_start_output(dataset_name, time_in_seconds, new_file_)
     call fiona_output(dataset_name, var_name, array)
     call fiona_end_output(dataset_name)
 
@@ -1681,7 +1671,7 @@ contains
     type is (dataset_type)
       res => value
     class default
-      call log_error('Failed to get dataset ' // trim(dataset_name) // '.' // trim(mode_) // '!')
+      call log_error('Failed to get dataset ' // trim(dataset_name) // '.' // trim(mode_) // '!', __FILE__, __LINE__)
     end select
 
   end function get_dataset

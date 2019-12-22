@@ -36,7 +36,7 @@ program fiona_test
     call test_quick_output()
   end if
 
-  call test_parallel_input()
+  ! call test_parallel_input()
 
   if (proc_id == 0) then
     call test_suite_report(test_suite)

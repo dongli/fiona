@@ -43,6 +43,7 @@ module fiona_mod
     type(hash_table_type) dims
     type(hash_table_type) vars
     integer :: time_step = 0
+    real(8) :: time_in_seconds = -1
     ! --------------------------------------------------------------------------
     ! Parallel IO
     integer :: mpi_comm = -1
@@ -494,13 +495,16 @@ contains
       if (.not. present(time_in_seconds)) then
         call log_error('Time in seconds is needed!', __FILE__, __LINE__)
       end if
-      dataset%time_step = dataset%time_step + 1
-      ! Update time units because restart may change it.
-      write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
-      ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
-      call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
-      ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
-      call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
+      if (time_in_seconds /= dataset%time_in_seconds) then
+        dataset%time_step = dataset%time_step + 1
+        dataset%time_in_seconds = time_in_seconds
+        ! Update time units because restart may change it.
+        write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
+        ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
+        call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
+        ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
+        call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
+      end if
     end if
 
   end subroutine fiona_start_output
@@ -1558,7 +1562,7 @@ contains
     if (present(file_prefix)) then
       file_prefix_ = file_prefix
     else
-      file_prefix_ = dataset_name
+      file_prefix_ = 'fiona'
     end if
 
     if (datasets%hashed(trim(dataset_name) // '.output')) then

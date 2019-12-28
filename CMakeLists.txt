@@ -1,6 +1,6 @@
-cmake_minimum_required (VERSION 3.0)
+cmake_minimum_required(VERSION 3.13)
 
-project (fiona LANGUAGES Fortran)
+project(fiona LANGUAGES Fortran)
 
 if (CMAKE_Fortran_COMPILER_ID MATCHES Intel)
   set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -no-wrap-margin -Ofast")
@@ -17,8 +17,7 @@ elseif (CMAKE_Fortran_COMPILER_ID MATCHES GNU)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -g -gdwarf -Og -fbacktrace -fcheck=all")
   endif ()
 endif ()
-set (CMAKE_Fortran_MODULE_DIRECTORY "${CMAKE_BINARY_DIR}")
-include_directories(${CMAKE_BINARY_DIR})
+set(CMAKE_Fortran_MODULE_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 find_package(MPI)
 if (MPI_Fortran_FOUND)

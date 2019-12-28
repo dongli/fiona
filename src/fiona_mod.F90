@@ -55,6 +55,7 @@ module fiona_mod
     integer file_start_idx, file_end_idx
     ! --------------------------------------------------------------------------
   contains
+    procedure :: open => dataset_open
     procedure :: get_dim => get_dim_from_dataset
     procedure :: get_var => get_var_from_dataset
   end type dataset_type
@@ -915,7 +916,6 @@ contains
     type(dataset_type), pointer :: dataset
     type(dim_type), pointer :: dim
     integer ierr, dimid
-    integer temp_id
 
     ! TODO: Try to refactor mode usage in dataset key.
     dataset => get_dataset(dataset_name, mode='input')
@@ -929,22 +929,15 @@ contains
       deallocate(dim)
       dim => dataset%get_dim(name)
 
-      ! Temporally open the data file.
-      if (dataset%mpi_comm /= -1) then
-        ierr = NF90_OPEN(trim(dataset%file_paths(1)), NF90_NOWRITE + NF90_64BIT_OFFSET, temp_id)
-        call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_paths(1)) // '"!', __FILE__, __LINE__)
-      else
-        ierr = NF90_OPEN(trim(dataset%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, temp_id)
-        call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-      end if
+      call dataset%open()
 
-      ierr = NF90_INQ_DIMID(temp_id, name, dimid)
+      ierr = NF90_INQ_DIMID(dataset%id, name, dimid)
       call handle_error(ierr, 'Failed to inquire dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-      ierr = NF90_INQUIRE_DIMENSION(temp_id, dimid, len=dim%size)
+      ierr = NF90_INQUIRE_DIMENSION(dataset%id, dimid, len=dim%size)
       call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-      ierr = NF90_CLOSE(temp_id)
+      ierr = NF90_CLOSE(dataset%id)
       if (dataset%mpi_comm /= -1) then
         call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_paths(1)) // '"!', __FILE__, __LINE__)
       else
@@ -1072,6 +1065,8 @@ contains
     integer ierr
 
     dataset => get_dataset(dataset_name, mode='input')
+
+    call dataset%open()
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
@@ -1679,6 +1674,22 @@ contains
     end select
 
   end function get_dataset
+
+  subroutine dataset_open(this)
+
+    class(dataset_type), intent(inout) :: this
+
+    integer ierr
+
+    if (this%mpi_comm /= -1) then
+      ierr = NF90_OPEN(trim(this%file_paths(1)), NF90_NOWRITE + NF90_64BIT_OFFSET, this%id)
+      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_paths(1)) // '"!', __FILE__, __LINE__)
+    else
+      ierr = NF90_OPEN(trim(this%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, this%id)
+      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)
+    end if
+
+  end subroutine dataset_open
 
   function get_dim_from_dataset(this, dim_name) result(res)
 

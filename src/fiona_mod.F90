@@ -221,9 +221,8 @@ contains
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
 
-    if (present(mute)) then
-      if (mute) return
-    end if
+    if (.not. present(mute)) return
+    if (mute) return
     if (dataset%file_path /= 'N/A') then
       call log_notice('Create ' // trim(dataset%mode) // ' dataset ' // trim(dataset%file_path) // '.')
     else if (dataset%file_prefix /= 'N/A') then

@@ -56,6 +56,8 @@ module fiona_mod
     ! --------------------------------------------------------------------------
   contains
     procedure :: open => dataset_open
+    procedure :: is_open => dataset_is_open
+    procedure :: close => dataset_close
     procedure :: get_dim => get_dim_from_dataset
     procedure :: get_var => get_var_from_dataset
   end type dataset_type
@@ -231,11 +233,10 @@ contains
 
   end subroutine fiona_create_dataset
 
-  subroutine fiona_open_dataset(dataset_name, file_paths, parallel, mpi_comm, variant_dim)
+  subroutine fiona_open_dataset(dataset_name, file_paths, mpi_comm, variant_dim)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: file_paths(:)
-    logical, intent(in), optional :: parallel
     integer, intent(in), optional :: mpi_comm
     character(*), intent(in), optional :: variant_dim
 
@@ -254,37 +255,37 @@ contains
     dataset%mode = 'input'
 
 #ifdef HAS_MPI
-    if (present(parallel) .and. present(mpi_comm)) then
-      if (parallel) then
-        dataset%mpi_comm = mpi_comm
-        ! Partition the files to each process.
-        call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
-        call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
-        n1 = size(file_paths) / dataset%num_proc
-        n2 = mod(size(file_paths), dataset%num_proc)
-        n3 = merge(n1 + 1, n1, dataset%proc_id < n2)
-        dataset%file_start_idx = 1
-        do i = 0, dataset%proc_id - 1
-          dataset%file_start_idx = dataset%file_start_idx + merge(n1 + 1, n1, i < n2)
-        end do
-        dataset%file_end_idx = dataset%file_start_idx + n3 - 1
-      end if
-      ! Check unlimited dimension for parallelizing.
-      ierr = NF90_OPEN(file_paths(1), NF90_NOWRITE + NF90_64BIT_OFFSET, tmp_id)
-      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
-      ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
-      call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
-      if (unlimited_dimid == -1) then
-        if (present(variant_dim)) then
-          dataset%variant_dim = variant_dim
-        else
-          call log_error('There is no unlimited dimension in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
-        end if
-      else
-        ierr = NF90_INQUIRE_DIMENSION(tmp_id, unlimited_dimid, name=dataset%variant_dim)
-        call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
-      end if
+    if (present(mpi_comm)) then
+      dataset%mpi_comm = mpi_comm
+      ! Partition the files to each process.
+      call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
+      call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
+      n1 = size(file_paths) / dataset%num_proc
+      n2 = mod(size(file_paths), dataset%num_proc)
+      n3 = merge(n1 + 1, n1, dataset%proc_id < n2)
+      dataset%file_start_idx = 1
+      do i = 0, dataset%proc_id - 1
+        dataset%file_start_idx = dataset%file_start_idx + merge(n1 + 1, n1, i < n2)
+      end do
+      dataset%file_end_idx = dataset%file_start_idx + n3 - 1
     end if
+    ! Check unlimited dimension for parallelizing.
+    ierr = NF90_OPEN(file_paths(1), NF90_NOWRITE + NF90_64BIT_OFFSET, tmp_id)
+    call handle_error(ierr, 'Failed to open NetCDF file "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+    ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
+    call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+    if (unlimited_dimid == -1) then
+      if (present(variant_dim)) then
+        dataset%variant_dim = variant_dim
+      else
+        call log_error('There is no unlimited dimension in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+      end if
+    else
+      ierr = NF90_INQUIRE_DIMENSION(tmp_id, unlimited_dimid, name=dataset%variant_dim)
+      call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+    end if
+    ! Set file_path to the first path.
+    dataset%file_path = file_paths(1)
 #endif
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
@@ -875,12 +876,10 @@ contains
     character(*), intent(in) :: dataset_name
 
     type(dataset_type), pointer :: dataset
-    integer ierr
 
     dataset => get_dataset(dataset_name, mode='output')
 
-    ierr = NF90_CLOSE(dataset%id)
-    call handle_error(ierr, 'Failed to close dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
+    call dataset%close()
 
   end subroutine fiona_end_output
 
@@ -895,12 +894,9 @@ contains
     dataset => get_dataset(dataset_name, mode='input')
 
     if (present(file_idx)) then
-      ierr = NF90_OPEN(dataset%file_paths(file_idx), NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
-      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_paths(1)) // '"!', __FILE__, __LINE__)
-    else
-      ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, dataset%id)
-      call handle_error(ierr, 'Failed to open NetCDF file ' // trim(dataset%file_path) // ' to input!', __FILE__, __LINE__)
+      dataset%file_path = dataset%file_paths(file_idx)
     end if
+    call dataset%open()
 
   end subroutine fiona_start_input
 
@@ -936,12 +932,7 @@ contains
       ierr = NF90_INQUIRE_DIMENSION(dataset%id, dimid, len=dim%size)
       call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
-      ierr = NF90_CLOSE(dataset%id)
-      if (dataset%mpi_comm /= -1) then
-        call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_paths(1)) // '"!', __FILE__, __LINE__)
-      else
-        call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-      end if
+      call dataset%close()
     end if
     if (present(size)) size = dim%size
     if (present(start_idx)) start_idx = dataset%file_start_idx
@@ -1049,8 +1040,12 @@ contains
 
     dataset => get_dataset(dataset_name, mode='input')
 
+    call dataset%open()
+
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+
+    call dataset%close()
 
   end subroutine fiona_get_att_r4
 
@@ -1516,12 +1511,10 @@ contains
     character(*), intent(in) :: dataset_name
 
     type(dataset_type), pointer :: dataset
-    integer ierr
 
     dataset => get_dataset(dataset_name, mode='input')
 
-    ierr = NF90_CLOSE(dataset%id)
-    call handle_error(ierr, 'Failed to end input!', __FILE__, __LINE__)
+    call dataset%close()
 
   end subroutine fiona_end_input
 
@@ -1680,15 +1673,35 @@ contains
 
     integer ierr
 
-    if (this%mpi_comm /= -1) then
-      ierr = NF90_OPEN(trim(this%file_paths(1)), NF90_NOWRITE + NF90_64BIT_OFFSET, this%id)
-      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_paths(1)) // '"!', __FILE__, __LINE__)
-    else
-      ierr = NF90_OPEN(trim(this%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, this%id)
-      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)
-    end if
+    if (this%is_open()) call this%close()
+    ierr = NF90_OPEN(trim(this%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, this%id)
+    call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine dataset_open
+
+  logical function dataset_is_open(this) result(res)
+
+    class(dataset_type), intent(in) :: this
+
+    integer ierr
+
+    ierr = NF90_INQUIRE(this%id)
+    res = ierr == NF90_NOERR
+
+  end function dataset_is_open
+
+  subroutine dataset_close(this)
+
+    class(dataset_type), intent(inout) :: this
+
+    integer ierr
+
+    if (this%is_open()) then
+      ierr = NF90_CLOSE(this%id)
+      call handle_error(ierr, 'Failed to close file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)
+    end if
+
+  end subroutine dataset_close
 
   function get_dim_from_dataset(this, dim_name) result(res)
 

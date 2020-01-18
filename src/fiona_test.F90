@@ -64,7 +64,7 @@ contains
       end do
     end do
 
-    call fiona_create_dataset('t0', file_path='test.nc', mode='w', mute=.true.)
+    call fiona_create_dataset('t0', file_path='test.nc')
     call fiona_add_dim('t0', 'x', long_name='x', units='m', size=size(xi), add_var=.true.)
     call fiona_add_dim('t0', 'y', long_name='y', units='m', size=size(yi), add_var=.true.)
     call fiona_add_var('t0', 'f', long_name='f', units='1', dim_names=['x', 'y'], data_type='r8')
@@ -82,7 +82,7 @@ contains
 
     call test_case_create('Input', test_suite)
 
-    call fiona_create_dataset('t0', file_path='test.nc', mode='r', mute=.true.)
+    call fiona_open_dataset('t0', file_path='test.nc')
     call fiona_get_dim('t0', 'x', size=nx)
     call assert_equal(nx, size(xi), __FILE__, __LINE__, test_suite)
     call fiona_get_dim('t0', 'y', size=ny)
@@ -109,7 +109,7 @@ contains
     call fiona_quick_output('t1', 'f', ['x', 'y'], fi, file_prefix='test_quick')
     call fiona_quick_output('t1', 'g', ['x', 'y'], fi, file_prefix='test_quick')
 
-    call fiona_create_dataset('t1', file_path='test_quick.t1.nc', mode='r', mute=.true.)
+    call fiona_open_dataset('t1', file_path='test_quick.t1.nc')
     call fiona_get_dim('t1', 'x', size=nx)
     call assert_equal(nx, size(xi), __FILE__, __LINE__, test_suite)
     call fiona_get_dim('t1', 'y', size=ny)

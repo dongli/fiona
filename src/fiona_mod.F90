@@ -46,9 +46,9 @@ module fiona_mod
     real(8) :: time_in_seconds = -1
     ! --------------------------------------------------------------------------
     ! Parallel IO
-    integer :: mpi_comm = -1
-    integer num_proc
-    integer proc_id
+    integer :: mpi_comm = MPI_COMM_NULL
+    integer :: num_proc = 0
+    integer :: proc_id  = MPI_PROC_NULL
     ! Parallel input for serial files
     character(256), allocatable :: file_paths(:)
     character(30) :: variant_dim = 'N/A'
@@ -66,6 +66,9 @@ module fiona_mod
     character(256) long_name
     character(60) units
     integer size
+    ! --------------------------------------------------------------------------
+    ! Parallel IO
+    logical :: decomp = .false.
   end type dim_type
 
   type var_dim_type
@@ -158,20 +161,18 @@ contains
 
   end subroutine fiona_init
 
-  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, mode, mute)
+  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, mpi_comm)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in), optional :: desc
     character(*), intent(in), optional :: file_prefix
     character(*), intent(in), optional :: file_path
-    character(*), intent(in), optional :: mode
-    logical, intent(in), optional :: mute
+    integer, intent(in), optional :: mpi_comm
 
-    character(10) mode_
     character(256) desc_, file_prefix_, file_path_
     type(dataset_type) dataset
     logical is_exist
-    integer i
+    integer ierr
 
     if (present(desc)) then
       desc_ = desc
@@ -188,20 +189,6 @@ contains
     else
       file_path_ = ''
     end if
-    if (present(mode)) then
-      mode_ = mode
-    else
-      mode_ = 'output'
-    end if
-    if (mode_ == 'r') mode_ = 'input'
-    if (mode_ == 'w') mode_ = 'output'
-
-    if (mode_ == 'input') then
-      inquire(file=file_path_, exist=is_exist)
-      if (.not. is_exist) then
-        call log_error('fiona_create_dataset: Input file "' // trim(file_path_) // '" does not exist!')
-      end if
-    end if
 
     if (datasets%hashed(dataset_name)) then
       call log_error('Already created dataset ' // trim(dataset_name) // '!')
@@ -217,17 +204,14 @@ contains
     else if (file_prefix_ == '' .and. file_path_ /= '') then
       dataset%file_path = file_path_
     end if
-    dataset%mode = mode_
+    dataset%mode = 'output'
+    if (present(mpi_comm)) then
+      dataset%mpi_comm = mpi_comm
+      call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
+      call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
+    end if
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
-
-    if (.not. present(mute)) return
-    if (mute) return
-    if (dataset%file_path /= 'N/A') then
-      call log_notice('Create ' // trim(dataset%mode) // ' dataset ' // trim(dataset%file_path) // '.')
-    else if (dataset%file_prefix /= 'N/A') then
-      call log_notice('Create ' // trim(dataset%mode) // ' dataset ' // trim(dataset%file_prefix) // '.')
-    end if
 
   end subroutine fiona_create_dataset
 
@@ -305,7 +289,7 @@ contains
 
   end subroutine fiona_add_att
 
-  subroutine fiona_add_dim(dataset_name, name, long_name, units, size, add_var)
+  subroutine fiona_add_dim(dataset_name, name, long_name, units, size, add_var, decomp)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -313,6 +297,7 @@ contains
     character(*), intent(in), optional :: units
     integer, intent(in), optional :: size
     logical, intent(in), optional :: add_var
+    logical, intent(in), optional :: decomp
 
     type(dataset_type), pointer :: dataset
     type(dim_type) dim
@@ -329,6 +314,7 @@ contains
     else
       dim%size = size
     end if
+    dim%decomp = merge(decomp, .false., present(decomp))
 
     call dataset%dims%insert(name, dim)
 
@@ -470,9 +456,14 @@ contains
     type(hash_table_iterator_type) iter
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
-    integer i, ierr, dimids(10)
+    integer i, ierr
+    integer status(MPI_STATUS_SIZE)
 
     dataset => get_dataset(dataset_name, mode='output')
+
+    if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id > 0) then
+      call MPI_RECV(i, 1, MPI_INT, dataset%proc_id - 1, 0, dataset%mpi_comm, status, ierr)
+    end if
 
     if (present(tag)) then
       if (dataset%file_path /= 'N/A') then
@@ -488,7 +479,11 @@ contains
       end if
     end if
 
-    call apply_dataset_to_netcdf(file_path, dataset, new_file)
+    if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id == 0) then
+      call apply_dataset_to_netcdf_master(file_path, dataset, new_file)
+    else
+      call apply_dataset_to_netcdf_slave(file_path, dataset, new_file)
+    end if
 
     ! Write time dimension variable.
     if (associated(dataset%time_var)) then
@@ -500,16 +495,18 @@ contains
         dataset%time_in_seconds = time_in_seconds
         ! Update time units because restart may change it.
         write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
-        ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
-        call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
-        ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
-        call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
+        if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id == 0) then
+          ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
+          call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
+          ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
+          call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
+        end if
       end if
     end if
 
   end subroutine fiona_start_output
 
-  subroutine apply_dataset_to_netcdf(file_path, dataset, new_file, append)
+  subroutine apply_dataset_to_netcdf_master(file_path, dataset, new_file, append)
 
     character(*), intent(in) :: file_path
     type(dataset_type), intent(inout) :: dataset
@@ -519,16 +516,10 @@ contains
     type(hash_table_iterator_type) iter
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
-    integer i, ierr, id, dimids(10)
-    logical new_file_
+    integer i, ierr
+    integer, allocatable :: dimids(:)
 
-    if (present(new_file)) then
-      new_file_ = new_file
-    else
-      new_file_ = .true.
-    end if
-
-    if (new_file_) then
+    if (merge(new_file, .true., present(new_file))) then
       ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
       call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
     else
@@ -561,7 +552,7 @@ contains
     iter = hash_table_iterator(dataset%dims)
     do while (.not. iter%ended())
       dim => dataset%get_dim(iter%key)
-      ierr = NF90_INQ_DIMID(dataset%id, dim%name, id)
+      ierr = NF90_INQ_DIMID(dataset%id, dim%name, dim%id)
       if (ierr /= NF90_NOERR) then
         ierr = NF90_DEF_DIM(dataset%id, dim%name, dim%size, dim%id)
         call handle_error(ierr, 'Failed to define dimension ' // trim(dim%name) // '!', __FILE__, __LINE__)
@@ -572,13 +563,15 @@ contains
     iter = hash_table_iterator(dataset%vars)
     do while (.not. iter%ended())
       var => dataset%get_var(iter%key)
-      ierr = NF90_INQ_VARID(dataset%id, var%name, id)
+      ierr = NF90_INQ_VARID(dataset%id, var%name, var%id)
       if (ierr /= NF90_NOERR) then
+        allocate(dimids(size(var%dims)))
         do i = 1, size(var%dims)
           dimids(i) = var%dims(i)%ptr%id
         end do
         ierr = NF90_DEF_VAR(dataset%id, var%name, var%data_type, dimids(1:size(var%dims)), var%id)
         call handle_error(ierr, 'Failed to define variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+        deallocate(dimids)
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
         if (associated(var%missing_value)) then
@@ -600,12 +593,50 @@ contains
     ierr = NF90_ENDDEF(dataset%id)
     call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
 
-    if (new_file_) then
+    if (merge(new_file, .true., present(new_file))) then
       dataset%time_step = 0 ! Reset to zero!
       dataset%last_file_path = file_path
     end if
 
-  end subroutine apply_dataset_to_netcdf
+  end subroutine apply_dataset_to_netcdf_master
+
+  subroutine apply_dataset_to_netcdf_slave(file_path, dataset, new_file, append)
+
+    character(*), intent(in) :: file_path
+    type(dataset_type), intent(inout) :: dataset
+    logical, intent(in), optional :: new_file
+    logical, intent(in), optional :: append
+
+    type(hash_table_iterator_type) iter
+    type(dim_type), pointer :: dim
+    type(var_type), pointer :: var
+    integer i, ierr, id
+
+    ierr = NF90_OPEN(file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
+    call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
+
+    iter = hash_table_iterator(dataset%dims)
+    do while (.not. iter%ended())
+      dim => dataset%get_dim(iter%key)
+      ierr = NF90_INQ_DIMID(dataset%id, dim%name, dim%id)
+      call handle_error(ierr, 'Failed to get dimension ID of ' // trim(dim%name) // '! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
+      call iter%next()
+    end do
+
+    iter = hash_table_iterator(dataset%vars)
+    do while (.not. iter%ended())
+      var => dataset%get_var(iter%key)
+      ierr = NF90_INQ_VARID(dataset%id, var%name, var%id)
+      call handle_error(ierr, 'Failed to get variable ID of ' // trim(var%name) // '! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
+      call iter%next()
+    end do
+
+    if (merge(new_file, .true., present(new_file))) then
+      dataset%time_step = 0 ! Reset to zero!
+      dataset%last_file_path = file_path
+    end if
+
+  end subroutine apply_dataset_to_netcdf_slave
 
   subroutine fiona_output_0d(dataset_name, name, value)
 
@@ -688,30 +719,31 @@ contains
 
   end subroutine fiona_output_1d
 
-  subroutine fiona_output_2d(dataset_name, name, array)
+  subroutine fiona_output_2d(dataset_name, name, array, decomp_ibegs, decomp_iends)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: array(:,:)
+    integer, intent(in), optional :: decomp_ibegs(:)
+    integer, intent(in), optional :: decomp_iends(:)
 
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
-    integer lb1, ub1, lb2, ub2
-    integer i, ierr
+    integer i, j, ierr
     integer start(3), count(3)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
-    lb1 = lbound(array, 1)
-    ub1 = ubound(array, 1)
-    lb2 = lbound(array, 2)
-    ub2 = ubound(array, 2)
-
+    j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
         start(i) = dataset%time_step
         count(i) = 1
+      else if (var%dims(i)%ptr%decomp .and. present(decomp_ibegs) .and. present(decomp_iends)) then
+        start(i) = decomp_ibegs(j)
+        count(i) = decomp_iends(j) - decomp_ibegs(j) + 1
+        j = j + 1
       else
         start(i) = 1
         count(i) = var%dims(i)%ptr%size
@@ -720,11 +752,11 @@ contains
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -740,19 +772,11 @@ contains
 
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
-    integer lb1, ub1, lb2, ub2, lb3, ub3
     integer i, ierr
     integer start(3), count(3)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
-
-    lb1 = lbound(array, 1)
-    ub1 = ubound(array, 1)
-    lb2 = lbound(array, 2)
-    ub2 = ubound(array, 2)
-    lb3 = lbound(array, 3)
-    ub3 = ubound(array, 3)
 
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
@@ -766,11 +790,11 @@ contains
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
@@ -784,21 +808,11 @@ contains
 
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
-    integer lb1, ub1, lb2, ub2, lb3, ub3, lb4, ub4
     integer i, ierr
     integer start(4), count(4)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
-
-    lb1 = lbound(array, 1)
-    ub1 = ubound(array, 1)
-    lb2 = lbound(array, 2)
-    ub2 = ubound(array, 2)
-    lb3 = lbound(array, 3)
-    ub3 = ubound(array, 3)
-    lb4 = lbound(array, 4)
-    ub4 = ubound(array, 4)
 
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
@@ -812,11 +826,11 @@ contains
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
@@ -830,23 +844,11 @@ contains
 
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
-    integer lb1, ub1, lb2, ub2, lb3, ub3, lb4, ub4, lb5, ub5
     integer i, ierr
     integer start(5), count(5)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
-
-    lb1 = lbound(array, 1)
-    ub1 = ubound(array, 1)
-    lb2 = lbound(array, 2)
-    ub2 = ubound(array, 2)
-    lb3 = lbound(array, 3)
-    ub3 = ubound(array, 3)
-    lb4 = lbound(array, 4)
-    ub4 = ubound(array, 4)
-    lb5 = lbound(array, 5)
-    ub5 = ubound(array, 5)
 
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
@@ -860,11 +862,11 @@ contains
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb1:ub1,lb2:ub2,lb3:ub3,lb4:ub4,lb5:ub5), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
@@ -881,6 +883,10 @@ contains
 
     ierr = NF90_CLOSE(dataset%id)
     call handle_error(ierr, 'Failed to close dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
+
+    if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id < dataset%num_proc - 1) then
+      call MPI_SEND(1, 1, MPI_INT, dataset%proc_id + 1, 0, dataset%mpi_comm, ierr)
+    end if
 
   end subroutine fiona_end_output
 
@@ -1573,7 +1579,7 @@ contains
         new_file_ = .false.
       end if
     else
-      call fiona_create_dataset(dataset_name, 'Fiona quick output', file_prefix=file_prefix_, mode='output', mute=.true.)
+      call fiona_create_dataset(dataset_name, 'Fiona quick output', file_prefix=file_prefix_)
       if (present(time_in_seconds)) call fiona_add_dim(dataset_name, 'time', add_var=.true.)
       call fiona_add_dim(dataset_name, dim_names(1), size=size(array, 1))
       call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
@@ -1637,7 +1643,7 @@ contains
         new_file_ = .false.
       end if
     else
-      call fiona_create_dataset(dataset_name, 'Fiona quick output', file_prefix=file_prefix_, mode='output', mute=.true.)
+      call fiona_create_dataset(dataset_name, 'Fiona quick output', file_prefix=file_prefix_)
       if (present(time_in_seconds)) call fiona_add_dim(dataset_name, 'time', add_var=.true.)
       do i = 1, 2
         call fiona_add_dim(dataset_name, dim_names(i), size=size(array, i))

@@ -652,6 +652,9 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+    ! Let only root process to output scalar value.
+    if (dataset%proc_id /= 0) return
+
     if (var%dims(1)%ptr%size == NF90_UNLIMITED) then
       start(1) = dataset%time_step
     else
@@ -671,47 +674,44 @@ contains
 
   end subroutine fiona_output_0d
 
-  subroutine fiona_output_1d(dataset_name, name, array)
+  subroutine fiona_output_1d(dataset_name, name, array, decomp_ibegs, decomp_iends)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: array(:)
+    integer, intent(in), optional :: decomp_ibegs(:)
+    integer, intent(in), optional :: decomp_iends(:)
 
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
-    integer lb, ub
-    integer i, ierr
+    integer i, j, ierr
     integer start(2), count(2)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
-    if (size(var%dims) == 1) then
-      lb = 1
-      ub = var%dims(1)%ptr%size
-      start(1) = 1
-      count(1) = var%dims(1)%ptr%size
-    else
-      do i = 1, 2
-        if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
-          start(i) = dataset%time_step
-          count(i) = 1
-        else
-          lb = lbound(array, i)
-          ub = ubound(array, i)
-          start(i) = 1
-          count(i) = var%dims(i)%ptr%size
-        end if
-      end do
-    end if
+    j = 1
+    do i = 1, size(var%dims)
+      if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
+        start(i) = dataset%time_step
+        count(i) = 1
+      else if (var%dims(i)%ptr%decomp .and. present(decomp_ibegs) .and. present(decomp_iends)) then
+        start(i) = decomp_ibegs(j)
+        count(i) = decomp_iends(j) - decomp_ibegs(j) + 1
+        j = j + 1
+      else
+        start(i) = 1
+        count(i) = var%dims(i)%ptr%size
+      end if
+    end do
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array(lb:ub), start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select

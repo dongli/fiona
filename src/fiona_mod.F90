@@ -215,10 +215,11 @@ contains
 
   end subroutine fiona_create_dataset
 
-  subroutine fiona_open_dataset(dataset_name, file_paths, parallel, mpi_comm, variant_dim)
+  subroutine fiona_open_dataset(dataset_name, file_path, file_paths, parallel, mpi_comm, variant_dim)
 
     character(*), intent(in) :: dataset_name
-    character(*), intent(in) :: file_paths(:)
+    character(*), intent(in), optional :: file_path
+    character(*), intent(in), optional :: file_paths(:)
     logical, intent(in), optional :: parallel
     integer, intent(in), optional :: mpi_comm
     character(*), intent(in), optional :: variant_dim
@@ -234,13 +235,20 @@ contains
     dataset%atts = hash_table()
     dataset%dims = hash_table()
     dataset%vars = hash_table()
-    dataset%file_paths = file_paths
     dataset%mode = 'input'
+    if (present(file_path)) then
+      dataset%file_path = file_path
+    else if (present(file_paths)) then
+      dataset%file_paths = file_paths
+      dataset%file_path = file_paths(1)
+    else
+      call log_error('fiona_open_dataset needs file_path or file_paths argument!', __FILE__, __LINE__)
+    end if
 
 #ifdef HAS_MPI
-    if (present(parallel) .and. present(mpi_comm)) then
-      if (parallel) then
-        dataset%mpi_comm = mpi_comm
+    if (present(mpi_comm)) then
+      dataset%mpi_comm = mpi_comm
+      if (merge(parallel, .false., present(parallel))) then
         ! Partition the files to each process.
         call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
         call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
@@ -254,19 +262,19 @@ contains
         dataset%file_end_idx = dataset%file_start_idx + n3 - 1
       end if
       ! Check unlimited dimension for parallelizing.
-      ierr = NF90_OPEN(file_paths(1), NF90_NOWRITE + NF90_64BIT_OFFSET, tmp_id)
-      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+      ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, tmp_id)
+      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
       ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
-      call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+      call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
       if (unlimited_dimid == -1) then
         if (present(variant_dim)) then
           dataset%variant_dim = variant_dim
         else
-          call log_error('There is no unlimited dimension in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+          call log_error('There is no unlimited dimension in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
         end if
       else
         ierr = NF90_INQUIRE_DIMENSION(tmp_id, unlimited_dimid, name=dataset%variant_dim)
-        call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+        call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
       end if
     end if
 #endif
@@ -674,18 +682,18 @@ contains
 
   end subroutine fiona_output_0d
 
-  subroutine fiona_output_1d(dataset_name, name, array, decomp_ibegs, decomp_iends)
+  subroutine fiona_output_1d(dataset_name, name, array, start, count)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: array(:)
-    integer, intent(in), optional :: decomp_ibegs(:)
-    integer, intent(in), optional :: decomp_iends(:)
+    integer, intent(in), optional :: start(:)
+    integer, intent(in), optional :: count(:)
 
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
     integer i, j, ierr
-    integer start(2), count(2)
+    integer start_(2), count_(2)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
@@ -693,25 +701,25 @@ contains
     j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
-        start(i) = dataset%time_step
-        count(i) = 1
-      else if (var%dims(i)%ptr%decomp .and. present(decomp_ibegs) .and. present(decomp_iends)) then
-        start(i) = decomp_ibegs(j)
-        count(i) = decomp_iends(j) - decomp_ibegs(j) + 1
+        start_(i) = dataset%time_step
+        count_(i) = 1
+      else if (var%dims(i)%ptr%decomp .and. present(start) .and. present(count)) then
+        start_(i) = start(j)
+        count_(i) = count(j)
         j = j + 1
       else
-        start(i) = 1
-        count(i) = var%dims(i)%ptr%size
+        start_(i) = 1
+        count_(i) = var%dims(i)%ptr%size
       end if
     end do
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -719,18 +727,18 @@ contains
 
   end subroutine fiona_output_1d
 
-  subroutine fiona_output_2d(dataset_name, name, array, decomp_ibegs, decomp_iends)
+  subroutine fiona_output_2d(dataset_name, name, array, start, count)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: array(:,:)
-    integer, intent(in), optional :: decomp_ibegs(:)
-    integer, intent(in), optional :: decomp_iends(:)
+    integer, intent(in), optional :: start(:)
+    integer, intent(in), optional :: count(:)
 
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
     integer i, j, ierr
-    integer start(3), count(3)
+    integer start_(3), count_(3)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
@@ -738,25 +746,25 @@ contains
     j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
-        start(i) = dataset%time_step
-        count(i) = 1
-      else if (var%dims(i)%ptr%decomp .and. present(decomp_ibegs) .and. present(decomp_iends)) then
-        start(i) = decomp_ibegs(j)
-        count(i) = decomp_iends(j) - decomp_ibegs(j) + 1
+        start_(i) = dataset%time_step
+        count_(i) = 1
+      else if (var%dims(i)%ptr%decomp .and. present(start) .and. present(count)) then
+        start_(i) = start(j)
+        count_(i) = count(j)
         j = j + 1
       else
-        start(i) = 1
-        count(i) = var%dims(i)%ptr%size
+        start_(i) = 1
+        count_(i) = var%dims(i)%ptr%size
       end if
     end do
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
@@ -943,7 +951,7 @@ contains
       call handle_error(ierr, 'Failed to inquire size of dimension ' // trim(name) // ' in NetCDF file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
 
       ierr = NF90_CLOSE(dataset%id)
-      if (dataset%mpi_comm /= -1) then
+      if (allocated(dataset%file_paths)) then
         call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_paths(1)) // '"!', __FILE__, __LINE__)
       else
         call handle_error(ierr, 'Failed to close file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1206,7 +1214,7 @@ contains
         if (present(start) .and. present(count)) then
           ierr = NF90_GET_VAR(dataset%id, varid, array, &
             start=[start(1),start(2),time_step],        &
-            count=[count(1),count(2),time_step])
+            count=[count(1),count(2),1])
         else
           ierr = NF90_GET_VAR(dataset%id, varid, array,      &
             start=[             1,             1,time_step], &
@@ -1225,7 +1233,7 @@ contains
         if (present(start) .and. present(count)) then
           ierr = NF90_GET_VAR(dataset%id, varid, array, &
             start=[start(1),start(2),time_step],        &
-            count=[count(1),count(2),time_step])
+            count=[count(1),count(2),1])
         else
           ierr = NF90_GET_VAR(dataset%id, varid, array,      &
             start=[             1,             1,time_step], &
@@ -1244,7 +1252,7 @@ contains
         if (present(start) .and. present(count)) then
           ierr = NF90_GET_VAR(dataset%id, varid, array, &
             start=[start(1),start(2),time_step],        &
-            count=[count(1),count(2),time_step])
+            count=[count(1),count(2),1])
         else
           ierr = NF90_GET_VAR(dataset%id, varid, array,      &
             start=[             1,             1,time_step], &
@@ -1686,7 +1694,7 @@ contains
 
     integer ierr
 
-    if (this%mpi_comm /= -1) then
+    if (allocated(this%file_paths)) then
       ierr = NF90_OPEN(trim(this%file_paths(1)), NF90_NOWRITE + NF90_64BIT_OFFSET, this%id)
       call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_paths(1)) // '"!', __FILE__, __LINE__)
     else

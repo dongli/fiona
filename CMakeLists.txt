@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.0)
 
 project(fiona LANGUAGES Fortran)
 
@@ -60,7 +60,9 @@ set(sources
 
 add_library(fiona ${sources})
 target_include_directories(fiona PUBLIC ${NETCDF_INCLUDEDIR})
-target_link_directories(fiona PUBLIC ${NETCDF_LIBDIR})
+if (${CMAKE_VERSION} VERSION_GREATER "3.13")
+  target_link_directories(fiona PUBLIC ${NETCDF_LIBDIR})
+endif ()
 target_link_libraries(fiona netcdf netcdff fortran_container flogger fortran_string)
 if (MPI_Fortran_FOUND)
   target_include_directories(fiona PUBLIC ${MPI_Fortran_INCLUDE_PATH})

@@ -263,24 +263,21 @@ contains
         end do
         dataset%file_end_idx = dataset%file_start_idx + n3 - 1
       end if
-      ! Check unlimited dimension for parallelizing.
-      ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, tmp_id)
-      call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-      ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
-      call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-      if (unlimited_dimid == -1) then
-        if (present(variant_dim)) then
-          dataset%variant_dim = variant_dim
-        else
-          call log_error('There is no unlimited dimension in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
-        end if
+    end if
+    ! Check unlimited dimension.
+    ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, tmp_id)
+    call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
+    call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    if (unlimited_dimid == -1) then
+      if (present(variant_dim)) then
+        dataset%variant_dim = variant_dim
       else
-        ierr = NF90_INQUIRE_DIMENSION(tmp_id, unlimited_dimid, name=dataset%variant_dim)
-        call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+        call log_error('There is no unlimited dimension in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
       end if
     else
       ierr = NF90_INQUIRE_DIMENSION(tmp_id, unlimited_dimid, name=dataset%variant_dim)
-      call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(file_paths(1)) // '"!', __FILE__, __LINE__)
+      call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     end if
     ! Set file_path to the first path.
     dataset%file_path = file_paths(1)

@@ -60,6 +60,7 @@ module fiona_mod
     procedure :: close => dataset_close
     procedure :: get_dim => get_dim_from_dataset
     procedure :: get_var => get_var_from_dataset
+    final :: dataset_final
   end type dataset_type
 
   type dim_type
@@ -1749,13 +1750,20 @@ contains
 
   end function get_var_from_dataset
 
+  subroutine dataset_final(this)
+
+    type(dataset_type), intent(inout) :: this
+
+    if (allocated(this%file_paths)) deallocate(this%file_paths)
+
+  end subroutine dataset_final
+
   subroutine var_final(this)
 
     type(var_type), intent(inout) :: this
 
-    if (associated(this%missing_value)) then
-      deallocate(this%missing_value)
-    end if
+    if (associated(this%missing_value)) deallocate(this%missing_value)
+    if (allocated(this%dims)) deallocate(this%dims)
 
   end subroutine var_final
 

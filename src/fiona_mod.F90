@@ -280,8 +280,6 @@ contains
       ierr = NF90_INQUIRE_DIMENSION(tmp_id, unlimited_dimid, name=dataset%variant_dim)
       call handle_error(ierr, 'Failed to inquire unlimited dimension name in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     end if
-    ! Set file_path to the first path.
-    dataset%file_path = file_paths(1)
 #endif
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)

@@ -46,9 +46,11 @@ module fiona_mod
     real(8) :: time_in_seconds = -1
     ! --------------------------------------------------------------------------
     ! Parallel IO
-    integer :: mpi_comm = MPI_COMM_NULL
+#ifdef HAS_MPI
     integer :: num_proc = 0
+    integer :: mpi_comm = MPI_COMM_NULL
     integer :: proc_id  = MPI_PROC_NULL
+#endif
     ! Parallel input for serial files
     character(256), allocatable :: file_paths(:)
     character(30) :: variant_dim = 'N/A'
@@ -208,11 +210,13 @@ contains
       dataset%file_path = file_path_
     end if
     dataset%mode = 'output'
+#ifdef HAS_MPI
     if (present(mpi_comm)) then
       dataset%mpi_comm = mpi_comm
       call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
       call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
     end if
+#endif
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
 
@@ -468,13 +472,17 @@ contains
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
     integer i, ierr
+#ifdef HAS_MPI
     integer status(MPI_STATUS_SIZE)
+#endif
 
     dataset => get_dataset(dataset_name, mode='output')
 
+#ifdef HAS_MPI
     if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id > 0) then
       call MPI_RECV(i, 1, MPI_INT, dataset%proc_id - 1, 0, dataset%mpi_comm, status, ierr)
     end if
+#endif
 
     if (present(tag)) then
       if (dataset%file_path /= 'N/A') then
@@ -490,11 +498,13 @@ contains
       end if
     end if
 
+#ifdef HAS_MPI
     if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id == 0) then
       call apply_dataset_to_netcdf_master(file_path, dataset, new_file)
     else
       call apply_dataset_to_netcdf_slave(file_path, dataset, new_file)
     end if
+#endif
 
     ! Write time dimension variable.
     if (associated(dataset%time_var)) then
@@ -506,12 +516,14 @@ contains
         dataset%time_in_seconds = time_in_seconds
         ! Update time units because restart may change it.
         write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
+#ifdef HAS_MPI
         if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id == 0) then
           ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
           call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
           ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
           call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
         end if
+#endif
       end if
     end if
 
@@ -664,7 +676,9 @@ contains
     var => dataset%get_var(name)
 
     ! Let only root process to output scalar value.
+#ifdef HAS_MPI
     if (dataset%proc_id /= 0) return
+#endif
 
     if (var%dims(1)%ptr%size == NF90_UNLIMITED) then
       start(1) = dataset%time_step
@@ -894,9 +908,11 @@ contains
 
     call dataset%close()
 
+#ifdef HAS_MPI
     if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id < dataset%num_proc - 1) then
       call MPI_SEND(1, 1, MPI_INT, dataset%proc_id + 1, 0, dataset%mpi_comm, ierr)
     end if
+#endif
 
   end subroutine fiona_end_output
 

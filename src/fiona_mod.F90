@@ -775,37 +775,44 @@ contains
 
   end subroutine fiona_output_2d
 
-  subroutine fiona_output_3d(dataset_name, name, array)
+  subroutine fiona_output_3d(dataset_name, name, array, start, count)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*), intent(in) :: array(:,:,:)
+    integer, intent(in), optional :: start(:)
+    integer, intent(in), optional :: count(:)
 
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
-    integer i, ierr
-    integer start(3), count(3)
+    integer i, j, ierr
+    integer start_(4), count_(4)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+    j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
-        start(i) = dataset%time_step
-        count(i) = 1
+        start_(i) = dataset%time_step
+        count_(i) = 1
+      else if (var%dims(i)%ptr%decomp .and. present(start) .and. present(count)) then
+        start_(i) = start(j)
+        count_(i) = count(j)
+        j = j + 1
       else
-        start(i) = 1
-        count(i) = var%dims(i)%ptr%size
+        start_(i) = 1
+        count_(i) = var%dims(i)%ptr%size
       end if
     end do
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 

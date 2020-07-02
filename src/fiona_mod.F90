@@ -342,6 +342,8 @@ contains
             dim%long_name = 'Longitude'
           case ('lat', 'ilat')
             dim%long_name = 'Latitude'
+          case ('lev', 'ilev')
+            dim%long_name = 'Vertical level'
           case ('time', 'Time')
             dim%long_name = 'Time'
           end select
@@ -354,6 +356,8 @@ contains
             dim%units = 'degrees_east'
           case ('lat', 'ilat')
             dim%units = 'degrees_north'
+          case ('lev', 'ilev')
+            dim%units = '1'
           case ('time', 'Time')
             write(dim%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
           end select

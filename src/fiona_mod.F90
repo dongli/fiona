@@ -503,7 +503,7 @@ contains
     end if
 
 #ifdef HAS_MPI
-    if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id == 0) then
+    if (dataset%proc_id == MPI_PROC_NULL .or. dataset%proc_id == 0) then
       call apply_dataset_to_netcdf_master(file_path, dataset, new_file)
     else
       call apply_dataset_to_netcdf_slave(file_path, dataset, new_file)
@@ -521,7 +521,7 @@ contains
         ! Update time units because restart may change it.
         write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
 #ifdef HAS_MPI
-        if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id == 0) then
+        if (dataset%proc_id == MPI_PROC_NULL .or. dataset%proc_id == 0) then
           ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
           call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
           ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])

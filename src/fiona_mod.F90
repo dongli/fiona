@@ -44,6 +44,9 @@ module fiona_mod
     type(hash_table_type) vars
     integer :: time_step = 0
     real(8) :: time_in_seconds = -1
+    real(8) time_units_in_seconds
+    character(30) time_units_str
+    character(30) start_time_str
     ! --------------------------------------------------------------------------
     ! Parallel IO
 #ifdef HAS_MPI
@@ -93,7 +96,6 @@ module fiona_mod
   end type var_type
 
   type(hash_table_type) datasets
-  real(8) time_units_in_seconds
 
   interface fiona_output
     module procedure fiona_output_0d
@@ -127,6 +129,7 @@ module fiona_mod
     module procedure fiona_quick_output_2d_r8
   end interface fiona_quick_output
 
+  real(8) time_units_in_seconds
   character(30) time_units_str
   character(30) start_time_str
 
@@ -166,12 +169,14 @@ contains
 
   end subroutine fiona_init
 
-  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, mpi_comm)
+  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, start_time, time_units, mpi_comm)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in), optional :: desc
     character(*), intent(in), optional :: file_prefix
     character(*), intent(in), optional :: file_path
+    character(*), intent(in), optional :: start_time
+    character(*), intent(in), optional :: time_units
     integer, intent(in), optional :: mpi_comm
 
     character(256) desc_, file_prefix_, file_path_
@@ -217,6 +222,31 @@ contains
       call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
     end if
 #endif
+
+    if (present(start_time) .and. present(time_units)) then
+      select case (time_units)
+      case ('days')
+        dataset%time_units_in_seconds = 86400.0
+      case ('hours')
+        dataset%time_units_in_seconds = 3600.0
+      case ('minutes')
+        dataset%time_units_in_seconds = 60.0
+      case ('seconds')
+        dataset%time_units_in_seconds = 1.0
+      case default
+        call log_error('Invalid time_units ' // trim(time_units) // '!')
+      end select
+      dataset%start_time_str = start_time
+      dataset%time_units_str = time_units
+    else
+      dataset%time_units_in_seconds = time_units_in_seconds
+      dataset%start_time_str = start_time_str
+      dataset%time_units_str = time_units_str
+    end if
+
+    if (dataset%start_time_str == '' .or. dataset%time_units_str == '') then
+      call log_error('Start time or time units are not set!')
+    end if
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
 
@@ -359,7 +389,7 @@ contains
           case ('lev', 'ilev')
             dim%units = '1'
           case ('time', 'Time')
-            write(dim%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
+            write(dim%units, '(A, " since ", A)') trim(dataset%time_units_str), trim(dataset%start_time_str)
           end select
         else
           dim%units = units
@@ -519,12 +549,12 @@ contains
         dataset%time_step = dataset%time_step + 1
         dataset%time_in_seconds = time_in_seconds
         ! Update time units because restart may change it.
-        write(dataset%time_var%units, '(A, " since ", A)') trim(time_units_str), trim(start_time_str)
+        write(dataset%time_var%units, '(A, " since ", A)') trim(dataset%time_units_str), trim(dataset%start_time_str)
 #ifdef HAS_MPI
         if (dataset%proc_id == MPI_PROC_NULL .or. dataset%proc_id == 0) then
           ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
           call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
-          ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / time_units_in_seconds], [dataset%time_step], [1])
+          ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / dataset%time_units_in_seconds], [dataset%time_step], [1])
           call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
         end if
 #endif
@@ -836,73 +866,90 @@ contains
 
   end subroutine fiona_output_3d
 
-  subroutine fiona_output_4d(dataset_name, name, array)
+  subroutine fiona_output_4d(dataset_name, name, array, start, count)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*)    , intent(in) :: array(:,:,:,:)
+    integer, intent(in), optional :: start(:)
+    integer, intent(in), optional :: count(:)
 
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
-    integer i, ierr
-    integer start(4), count(4)
+    integer i, j, ierr
+    integer start_(4), count_(4)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+    j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
-        start(i) = dataset%time_step
-        count(i) = 1
+        start_(i) = dataset%time_step
+        count_(i) = 1
+      else if (var%dims(i)%ptr%decomp .and. present(start) .and. present(count)) then
+        start_(i) = start(j)
+        count_(i) = count(j)
+        j = j + 1
       else
-        start(i) = 1
-        count(i) = var%dims(i)%ptr%size
+        start_(i) = 1
+        count_(i) = var%dims(i)%ptr%size
       end if
     end do
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      if (dataset%id == 1) then
+        print *, var%id, shape(array), start_, count_
+      end if
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
   end subroutine fiona_output_4d
   
-  subroutine fiona_output_5d(dataset_name, name, array)
+  subroutine fiona_output_5d(dataset_name, name, array, start, count)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
     class(*)    , intent(in) :: array(:,:,:,:,:)
+    integer, intent(in), optional :: start(:)
+    integer, intent(in), optional :: count(:)
 
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
-    integer i, ierr
-    integer start(5), count(5)
+    integer i, j, ierr
+    integer start_(5), count_(5)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+    j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
-        start(i) = dataset%time_step
-        count(i) = 1
+        start_(i) = dataset%time_step
+        count_(i) = 1
+      else if (var%dims(i)%ptr%decomp .and. present(start) .and. present(count)) then
+        start_(i) = start(j)
+        count_(i) = count(j)
+        j = j + 1
       else
-        start(i) = 1
-        count(i) = var%dims(i)%ptr%size
+        start_(i) = 1
+        count_(i) = var%dims(i)%ptr%size
       end if
     end do
 
     select type (array)
     type is (integer)
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(4))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(8))
-      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start, count)
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 

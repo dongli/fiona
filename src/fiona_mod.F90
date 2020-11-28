@@ -307,8 +307,6 @@ contains
     if (unlimited_dimid == -1) then
       if (present(variant_dim)) then
         dataset%variant_dim = variant_dim
-      else
-        call log_error('There is no unlimited dimension in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
       end if
     else
       ierr = NF90_INQUIRE_DIMENSION(tmp_id, unlimited_dimid, name=dataset%variant_dim)

@@ -1272,12 +1272,23 @@ contains
     integer, intent(in), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer ierr, varid
+    real add_offset, scale_factor
+    integer ierr, varid, xtype
 
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+
+    ! Check variable type in file.
+    ierr = NF90_INQUIRE_VARIABLE(dataset%id, varid, xtype=xtype)
+    if (xtype == NF90_SHORT) then
+      ierr = NF90_GET_ATT(dataset%id, varid, 'add_offset', add_offset)
+      call handle_error(ierr, 'No add_offset attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      ierr = NF90_GET_ATT(dataset%id, varid, 'scale_factor', scale_factor)
+      call handle_error(ierr, 'No scale_factor attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    end if
+
     select type (array)
     type is (integer)
       if (present(time_step)) then
@@ -1317,6 +1328,9 @@ contains
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
       end if
+      if (xtype == NF90_SHORT) then
+        array = scale_factor * array + add_offset
+      end if
     type is (real(8))
       if (present(time_step)) then
         if (present(start) .and. present(count)) then
@@ -1335,6 +1349,9 @@ contains
         else
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
+      end if
+      if (xtype == NF90_SHORT) then
+        array = scale_factor * array + add_offset
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1353,12 +1370,23 @@ contains
     integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer ierr, varid
+    real add_offset, scale_factor
+    integer ierr, varid, xtype
 
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+
+    ! Check variable type in file.
+    ierr = NF90_INQUIRE_VARIABLE(dataset%id, varid, xtype=xtype)
+    if (xtype == NF90_SHORT) then
+      ierr = NF90_GET_ATT(dataset%id, varid, 'add_offset', add_offset)
+      call handle_error(ierr, 'No add_offset attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      ierr = NF90_GET_ATT(dataset%id, varid, 'scale_factor', scale_factor)
+      call handle_error(ierr, 'No scale_factor attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    end if
+
     select type (array)
     type is (integer)
       if (present(time_step)) then
@@ -1400,6 +1428,9 @@ contains
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
       end if
+      if (xtype == NF90_SHORT) then
+        array = scale_factor * array + add_offset
+      end if
     type is (real(8))
       if (present(time_step)) then
         if (present(start) .and. present(count)) then
@@ -1419,6 +1450,9 @@ contains
         else
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
+      end if
+      if (xtype == NF90_SHORT) then
+        array = scale_factor * array + add_offset
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1437,12 +1471,23 @@ contains
     integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer ierr, varid
+    real add_offset, scale_factor
+    integer ierr, varid, xtype
 
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+
+    ! Check variable type in file.
+    ierr = NF90_INQUIRE_VARIABLE(dataset%id, varid, xtype=xtype)
+    if (xtype == NF90_SHORT) then
+      ierr = NF90_GET_ATT(dataset%id, varid, 'add_offset', add_offset)
+      call handle_error(ierr, 'No add_offset attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      ierr = NF90_GET_ATT(dataset%id, varid, 'scale_factor', scale_factor)
+      call handle_error(ierr, 'No scale_factor attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    end if
+
     select type (array)
     type is (integer)
       if (present(time_step)) then
@@ -1484,6 +1529,9 @@ contains
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
       end if
+      if (xtype == NF90_SHORT) then
+        array = scale_factor * array + add_offset
+      end if
     type is (real(8))
       if (present(time_step)) then
         if (present(start) .and. present(count)) then
@@ -1503,6 +1551,9 @@ contains
         else
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
+      end if
+      if (xtype == NF90_SHORT) then
+        array = scale_factor * array + add_offset
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1521,12 +1572,23 @@ contains
     integer     , intent(in ), optional :: time_step
 
     type(dataset_type), pointer :: dataset
-    integer ierr, varid
+    real add_offset, scale_factor
+    integer ierr, varid, xtype
 
     dataset => get_dataset(dataset_name, mode='input')
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+
+    ! Check variable type in file.
+    ierr = NF90_INQUIRE_VARIABLE(dataset%id, varid, xtype=xtype)
+    if (xtype == NF90_SHORT) then
+      ierr = NF90_GET_ATT(dataset%id, varid, 'add_offset', add_offset)
+      call handle_error(ierr, 'No add_offset attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      ierr = NF90_GET_ATT(dataset%id, varid, 'scale_factor', scale_factor)
+      call handle_error(ierr, 'No scale_factor attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+    end if
+
     select type (array)
     type is (integer)
       if (present(time_step)) then
@@ -1568,6 +1630,9 @@ contains
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
       end if
+      if (xtype == NF90_SHORT) then
+        array = scale_factor * array + add_offset
+      end if
     type is (real(8))
       if (present(time_step)) then
         if (present(start) .and. present(count)) then
@@ -1587,6 +1652,9 @@ contains
         else
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
+      end if
+      if (xtype == NF90_SHORT) then
+        array = scale_factor * array + add_offset
       end if
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1816,6 +1884,8 @@ contains
     select type (value => this%vars%value(var_name))
     type is (var_type)
       res => value
+    class default
+      call log_error('Variable ' // trim(var_name) // ' is not in dataset!', __FILE__, __LINE__)
     end select
 
   end function get_var_from_dataset

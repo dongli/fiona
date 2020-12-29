@@ -89,7 +89,10 @@ module fiona_mod
     character(256) long_name
     character(60) units
     integer data_type
-    class(*), pointer :: missing_value => null()
+    integer(4), allocatable :: i4_missing_value
+    integer(8), allocatable :: i8_missing_value
+    real(4), allocatable :: r4_missing_value
+    real(8), allocatable :: r8_missing_value
     type(var_dim_type), allocatable :: dims(:)
   contains
     final :: var_final
@@ -445,13 +448,30 @@ contains
         var%data_type = NF90_INT
       case ('integer(8)', 'i8')
         var%data_type = NF90_INT64
+      case ('char', 'character', 'c')
+        var%data_type = NF90_CHAR
       case default
         call log_error('Unknown data type ' // trim(data_type) // ' for variable ' // trim(name) // '!')
       end select
     end if
 
     if (present(missing_value)) then
-      allocate(var%missing_value, source=missing_value)
+      select type (missing_value)
+      type is (integer(4))
+        allocate(var%i4_missing_value)
+        var%i4_missing_value = missing_value
+      type is (integer(8))
+        allocate(var%i8_missing_value)
+        var%i8_missing_value = missing_value
+      type is (real(4))
+        allocate(var%r4_missing_value)
+        var%r4_missing_value = missing_value
+      type is (real(8))
+        allocate(var%r8_missing_value)
+        var%r8_missing_value = missing_value
+      class default
+        call log_error('Unknown missing_value type!', __FILE__, __LINE__)
+      end select
     end if
 
     allocate(var%dims(size(dim_names)))
@@ -631,18 +651,16 @@ contains
         deallocate(dimids)
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
-        if (associated(var%missing_value)) then
-          select type (missing_value => var%missing_value)
-          type is (integer(4))
-            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-          type is (integer(8))
-            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-          type is (real(4))
-            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-          type is (real(8))
-            ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', missing_value)
-          end select
+        if (allocated(var%i4_missing_value)) then
+          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%i4_missing_value)
+        else if (allocated(var%i8_missing_value)) then
+          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%i8_missing_value)
+        else if (allocated(var%r4_missing_value)) then
+          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%r4_missing_value)
+        else if (allocated(var%r8_missing_value)) then
+          ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%r8_missing_value)
         end if
+        call handle_error(ierr, 'Failed to put attribute _FillValue for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
       end if
       call iter%next()
     end do
@@ -770,6 +788,8 @@ contains
     type is (real(4))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(8))
+      ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
+    type is (character(*))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     class default
       call log_error('Unsupported array type!', __FILE__, __LINE__)
@@ -1834,7 +1854,10 @@ contains
 
     type(var_type), intent(inout) :: this
 
-    if (associated(this%missing_value)) deallocate(this%missing_value)
+    if (allocated(this%i4_missing_value)) deallocate(this%i4_missing_value)
+    if (allocated(this%i8_missing_value)) deallocate(this%i8_missing_value)
+    if (allocated(this%r4_missing_value)) deallocate(this%r4_missing_value)
+    if (allocated(this%r8_missing_value)) deallocate(this%r8_missing_value)
     if (allocated(this%dims)) deallocate(this%dims)
 
   end subroutine var_final

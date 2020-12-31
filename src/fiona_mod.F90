@@ -3,7 +3,7 @@ module fiona_mod
   use netcdf
   use flogger
   use string
-  use hash_table_mod
+  use container
 #ifdef HAS_MPI
   use mpi
 #endif
@@ -89,10 +89,10 @@ module fiona_mod
     character(256) long_name
     character(60) units
     integer data_type
-    integer(4), allocatable :: i4_missing_value
-    integer(8), allocatable :: i8_missing_value
-    real(4), allocatable :: r4_missing_value
-    real(8), allocatable :: r8_missing_value
+    integer(4), pointer :: i4_missing_value
+    integer(8), pointer :: i8_missing_value
+    real(4), pointer :: r4_missing_value
+    real(8), pointer :: r8_missing_value
     type(var_dim_type), allocatable :: dims(:)
   contains
     final :: var_final
@@ -209,9 +209,9 @@ contains
 
     dataset%name = dataset_name
     dataset%desc = desc_
-    dataset%atts = hash_table()
-    dataset%dims = hash_table()
-    dataset%vars = hash_table()
+    call create_hash_table(table=dataset%atts)
+    call create_hash_table(table=dataset%dims)
+    call create_hash_table(table=dataset%vars)
     if (file_prefix_ /= '' .and. file_path_ == '') then
       dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name)
     else if (file_prefix_ == '' .and. file_path_ /= '') then
@@ -272,9 +272,9 @@ contains
     end if
 
     dataset%name = dataset_name
-    dataset%atts = hash_table()
-    dataset%dims = hash_table()
-    dataset%vars = hash_table()
+    call create_hash_table(table=dataset%atts)
+    call create_hash_table(table=dataset%dims)
+    call create_hash_table(table=dataset%vars)
     dataset%mode = 'input'
     if (present(file_path)) then
       dataset%file_path = file_path
@@ -360,7 +360,11 @@ contains
     else
       dim%size = size
     end if
-    dim%decomp = merge(decomp, .false., present(decomp))
+    if (present(decomp)) then
+      dim%decomp = decomp
+    else
+      dim%decomp = .false.
+    end if
 
     call dataset%dims%insert(name, dim)
 
@@ -475,7 +479,7 @@ contains
     allocate(var%dims(size(dim_names)))
     do i = 1, size(dim_names)
       found = .false.
-      iter = hash_table_iterator(dataset%dims)
+      call create_hash_table_iterator(dataset%dims, iter)
       do while (.not. iter%ended())
         dim => dataset%get_dim(iter%key)
         if (dim%name == trim(dim_names(i))) then
@@ -594,20 +598,25 @@ contains
     integer i, ierr
     integer, allocatable :: dimids(:)
 
-    if (merge(new_file, .true., present(new_file))) then
+    if (present(new_file)) then
+      if (new_file) then
+        ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
+        call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
+      else
+        ierr = NF90_OPEN(dataset%last_file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
+        call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
+        ierr = NF90_REDEF(dataset%id)
+        call handle_error(ierr, 'Failed to enter definition mode!', __FILE__, __LINE__)
+      end if
+    else
       ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
       call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
-    else
-      ierr = NF90_OPEN(dataset%last_file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
-      call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-      ierr = NF90_REDEF(dataset%id)
-      call handle_error(ierr, 'Failed to enter definition mode!', __FILE__, __LINE__)
     end if
     ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'dataset', dataset%name)
     ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'desc', dataset%desc)
     ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'author', dataset%author)
 
-    iter = hash_table_iterator(dataset%atts)
+    call create_hash_table_iterator(dataset%atts, iter)
     do while (.not. iter%ended())
       select type (value => iter%value)
       type is (integer)
@@ -619,12 +628,12 @@ contains
       type is (character(*))
         ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
       type is (logical)
-        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, to_string(value))
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, to_str(value))
       end select
       call iter%next()
     end do
 
-    iter = hash_table_iterator(dataset%dims)
+    call create_hash_table_iterator(dataset%dims, iter)
     do while (.not. iter%ended())
       dim => dataset%get_dim(iter%key)
       ierr = NF90_INQ_DIMID(dataset%id, dim%name, dim%id)
@@ -635,7 +644,7 @@ contains
       call iter%next()
     end do
 
-    iter = hash_table_iterator(dataset%vars)
+    call create_hash_table_iterator(dataset%vars, iter)
     do while (.not. iter%ended())
       var => dataset%get_var(iter%key)
       ierr = NF90_INQ_VARID(dataset%id, var%name, var%id)
@@ -649,13 +658,13 @@ contains
         deallocate(dimids)
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'long_name', trim(var%long_name))
         ierr = NF90_PUT_ATT(dataset%id, var%id, 'units', trim(var%units))
-        if (allocated(var%i4_missing_value)) then
+        if (associated(var%i4_missing_value)) then
           ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%i4_missing_value)
-        else if (allocated(var%i8_missing_value)) then
+        else if (associated(var%i8_missing_value)) then
           ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%i8_missing_value)
-        else if (allocated(var%r4_missing_value)) then
+        else if (associated(var%r4_missing_value)) then
           ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%r4_missing_value)
-        else if (allocated(var%r8_missing_value)) then
+        else if (associated(var%r8_missing_value)) then
           ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%r8_missing_value)
         end if
         call handle_error(ierr, 'Failed to put attribute _FillValue for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
@@ -666,7 +675,12 @@ contains
     ierr = NF90_ENDDEF(dataset%id)
     call handle_error(ierr, 'Failed to end definition!', __FILE__, __LINE__)
 
-    if (merge(new_file, .true., present(new_file))) then
+    if (present(new_file)) then
+      if (new_file) then
+        dataset%time_step = 0 ! Reset to zero!
+        dataset%last_file_path = file_path
+      end if
+    else
       dataset%time_step = 0 ! Reset to zero!
       dataset%last_file_path = file_path
     end if
@@ -688,7 +702,7 @@ contains
     ierr = NF90_OPEN(file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
     call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
 
-    iter = hash_table_iterator(dataset%dims)
+    call create_hash_table_iterator(dataset%dims, iter)
     do while (.not. iter%ended())
       dim => dataset%get_dim(iter%key)
       ierr = NF90_INQ_DIMID(dataset%id, dim%name, dim%id)
@@ -696,7 +710,7 @@ contains
       call iter%next()
     end do
 
-    iter = hash_table_iterator(dataset%vars)
+    call create_hash_table_iterator(dataset%vars, iter)
     do while (.not. iter%ended())
       var => dataset%get_var(iter%key)
       ierr = NF90_INQ_VARID(dataset%id, var%name, var%id)
@@ -704,7 +718,12 @@ contains
       call iter%next()
     end do
 
-    if (merge(new_file, .true., present(new_file))) then
+    if (present(new_file)) then
+      if (new_file) then
+        dataset%time_step = 0 ! Reset to zero!
+        dataset%last_file_path = file_path
+      end if
+    else
       dataset%time_step = 0 ! Reset to zero!
       dataset%last_file_path = file_path
     end if
@@ -1922,10 +1941,10 @@ contains
 
     type(var_type), intent(inout) :: this
 
-    if (allocated(this%i4_missing_value)) deallocate(this%i4_missing_value)
-    if (allocated(this%i8_missing_value)) deallocate(this%i8_missing_value)
-    if (allocated(this%r4_missing_value)) deallocate(this%r4_missing_value)
-    if (allocated(this%r8_missing_value)) deallocate(this%r8_missing_value)
+    if (associated(this%i4_missing_value)) deallocate(this%i4_missing_value)
+    if (associated(this%i8_missing_value)) deallocate(this%i8_missing_value)
+    if (associated(this%r4_missing_value)) deallocate(this%r4_missing_value)
+    if (associated(this%r8_missing_value)) deallocate(this%r8_missing_value)
     if (allocated(this%dims)) deallocate(this%dims)
 
   end subroutine var_final

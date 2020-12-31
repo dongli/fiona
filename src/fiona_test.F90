@@ -140,7 +140,7 @@ contains
       read(10, '(A)') file_paths(i)
     end do
     close(10)
-    call fiona_open_dataset('p0', file_paths, parallel=.true., mpi_comm=MPI_COMM_WORLD)
+    call fiona_open_dataset('p0', file_paths=file_paths, parallel=.true., mpi_comm=MPI_COMM_WORLD)
     call fiona_get_dim('p0', 'x', size=num_x)
     call fiona_get_dim('p0', 'y', size=num_y)
     call fiona_get_dim('p0', 'time', start_idx=time_start_idx, end_idx=time_end_idx)

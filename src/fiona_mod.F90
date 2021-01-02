@@ -560,6 +560,8 @@ contains
     else
       call apply_dataset_to_netcdf_slave(file_path, dataset, new_file)
     end if
+#else
+    call apply_dataset_to_netcdf_master(file_path, dataset, new_file)
 #endif
 
     ! Write time dimension variable.

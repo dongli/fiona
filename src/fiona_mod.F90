@@ -45,8 +45,8 @@ module fiona_mod
     integer :: time_step = 0
     real(8) :: time_in_seconds = -1
     real(8) time_units_in_seconds
-    character(30) time_units_str
-    character(30) start_time_str
+    character(30) :: time_units_str = 'N/A'
+    character(30) :: start_time_str = 'N/A'
     ! --------------------------------------------------------------------------
     ! Parallel IO
 #ifdef HAS_MPI
@@ -89,10 +89,10 @@ module fiona_mod
     character(256) long_name
     character(60) units
     integer data_type
-    integer(4), pointer :: i4_missing_value
-    integer(8), pointer :: i8_missing_value
-    real(4), pointer :: r4_missing_value
-    real(8), pointer :: r8_missing_value
+    integer(4), pointer :: i4_missing_value => null()
+    integer(8), pointer :: i8_missing_value => null()
+    real(4), pointer :: r4_missing_value => null()
+    real(8), pointer :: r8_missing_value => null()
     type(var_dim_type), allocatable :: dims(:)
   contains
     final :: var_final
@@ -133,8 +133,8 @@ module fiona_mod
   end interface fiona_quick_output
 
   real(8) time_units_in_seconds
-  character(30) time_units_str
-  character(30) start_time_str
+  character(30) :: time_units_str = 'N/A'
+  character(30) :: start_time_str = 'N/A'
 
 contains
 
@@ -245,10 +245,6 @@ contains
       dataset%time_units_in_seconds = time_units_in_seconds
       dataset%start_time_str = start_time_str
       dataset%time_units_str = time_units_str
-    end if
-
-    if (dataset%start_time_str == '' .or. dataset%time_units_str == '') then
-      call log_error('Start time or time units are not set!')
     end if
 
     call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
@@ -394,6 +390,13 @@ contains
           case ('lev', 'ilev')
             dim%units = '1'
           case ('time', 'Time')
+            if (dataset%time_units_str == 'N/A') then
+              dataset%time_units_str = 'hours'
+              dataset%time_units_in_seconds = 3600.0d0
+            end if
+            if (dataset%start_time_str == 'N/A') then
+              dataset%start_time_str = '1970-01-01'
+            end if
             write(dim%units, '(A, " since ", A)') trim(dataset%time_units_str), trim(dataset%start_time_str)
           end select
         else
@@ -581,6 +584,11 @@ contains
           ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / dataset%time_units_in_seconds], [dataset%time_step], [1])
           call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
         end if
+#else
+        ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
+        call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
+        ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / dataset%time_units_in_seconds], [dataset%time_step], [1])
+        call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
 #endif
       end if
     end if
@@ -942,9 +950,6 @@ contains
     type is (real(4))
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     type is (real(8))
-      if (dataset%id == 1) then
-        print *, var%id, shape(array), start_, count_
-      end if
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)

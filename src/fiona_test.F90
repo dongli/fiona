@@ -65,10 +65,11 @@ contains
     end do
 
     call fiona_create_dataset('t0', file_path='test.nc')
+    call fiona_add_dim('t0', 'Time', add_var=.true.)
     call fiona_add_dim('t0', 'x', long_name='x', units='m', size=size(xi), add_var=.true.)
     call fiona_add_dim('t0', 'y', long_name='y', units='m', size=size(yi), add_var=.true.)
-    call fiona_add_var('t0', 'f', long_name='f', units='1', dim_names=['x', 'y'], data_type='r8')
-    call fiona_start_output('t0')
+    call fiona_add_var('t0', 'f', long_name='f', units='1', dim_names=['x   ', 'y   ', 'Time'], data_type='r8')
+    call fiona_start_output('t0', time_in_seconds=0.0d0)
     call fiona_output('t0', 'x', xi)
     call fiona_output('t0', 'y', yi)
     call fiona_output('t0', 'f', fi)

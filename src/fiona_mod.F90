@@ -299,7 +299,7 @@ contains
       end if
     end if
     ! Check unlimited dimension.
-    ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE + NF90_64BIT_OFFSET, tmp_id)
+    ierr = NF90_OPEN(dataset%file_path, ior(NF90_NETCDF4, NF90_NOWRITE), tmp_id)
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
     call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -537,12 +537,6 @@ contains
 
     dataset => get_dataset(dataset_name, mode='output')
 
-#ifdef HAS_MPI
-    if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id > 0) then
-      call MPI_RECV(i, 1, MPI_INT, dataset%proc_id - 1, 0, dataset%mpi_comm, status, ierr)
-    end if
-#endif
-
     if (present(tag)) then
       if (dataset%file_path /= 'N/A') then
         file_path = trim(delete_string(dataset%file_path, '.nc')) // '.' // trim(tag) // '.nc'
@@ -557,15 +551,7 @@ contains
       end if
     end if
 
-#ifdef HAS_MPI
-    if (dataset%proc_id == MPI_PROC_NULL .or. dataset%proc_id == 0) then
-      call apply_dataset_to_netcdf_master(file_path, dataset, new_file)
-    else
-      call apply_dataset_to_netcdf_slave(file_path, dataset, new_file)
-    end if
-#else
     call apply_dataset_to_netcdf_master(file_path, dataset, new_file)
-#endif
 
     ! Write time dimension variable.
     if (associated(dataset%time_var)) then
@@ -578,18 +564,13 @@ contains
         ! Update time units because restart may change it.
         write(dataset%time_var%units, '(A, " since ", A)') trim(dataset%time_units_str), trim(dataset%start_time_str)
 #ifdef HAS_MPI
-        if (dataset%proc_id == MPI_PROC_NULL .or. dataset%proc_id == 0) then
-          ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
-          call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
-          ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / dataset%time_units_in_seconds], [dataset%time_step], [1])
-          call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
-        end if
-#else
+        ierr = NF90_VAR_PAR_ACCESS(dataset%id, dataset%time_var%id, NF90_COLLECTIVE)
+        call handle_error(ierr, 'Failed to set parallel access for variable time!', __FILE__, __LINE__)
+#endif
         ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
         call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
         ierr = NF90_PUT_VAR(dataset%id, dataset%time_var%id, [time_in_seconds / dataset%time_units_in_seconds], [dataset%time_step], [1])
         call handle_error(ierr, 'Failed to write variable time!', __FILE__, __LINE__)
-#endif
       end if
     end if
 
@@ -610,16 +591,28 @@ contains
 
     if (present(new_file)) then
       if (new_file) then
-        ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
+#ifdef HAS_MPI
+        ierr = NF90_CREATE(file_path, ior(NF90_NETCDF4, NF90_MPIIO), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+#else
+        ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
+#endif
         call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
       else
-        ierr = NF90_OPEN(dataset%last_file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
-        call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
+#ifdef HAS_MPI
+        ierr = NF90_OPEN(dataset%last_file_path, ior(NF90_NETCDF4, ior(NF90_WRITE, NF90_MPIIO)), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+#else
+        ierr = NF90_OPEN(dataset%last_file_path, ior(NF90_NETCDF4, NF90_WRITE), dataset%id)
+#endif
+        call handle_error(ierr, 'Failed to open NetCDF file to output!', __FILE__, __LINE__)
         ierr = NF90_REDEF(dataset%id)
         call handle_error(ierr, 'Failed to enter definition mode!', __FILE__, __LINE__)
       end if
     else
-      ierr = NF90_CREATE(file_path, NF90_CLOBBER + NF90_64BIT_OFFSET, dataset%id)
+#ifdef HAS_MPI
+      ierr = NF90_CREATE(file_path, ior(NF90_NETCDF4, NF90_MPIIO), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+#else
+      ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
+#endif
       call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
     end if
     ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'dataset', dataset%name)
@@ -697,49 +690,6 @@ contains
 
   end subroutine apply_dataset_to_netcdf_master
 
-  subroutine apply_dataset_to_netcdf_slave(file_path, dataset, new_file, append)
-
-    character(*), intent(in) :: file_path
-    type(dataset_type), intent(inout) :: dataset
-    logical, intent(in), optional :: new_file
-    logical, intent(in), optional :: append
-
-    type(hash_table_iterator_type) iter
-    type(dim_type), pointer :: dim
-    type(var_type), pointer :: var
-    integer i, ierr, id
-
-    ierr = NF90_OPEN(file_path, NF90_WRITE + NF90_64BIT_OFFSET, dataset%id)
-    call handle_error(ierr, 'Failed to open NetCDF file to output! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-
-    call create_hash_table_iterator(dataset%dims, iter)
-    do while (.not. iter%ended())
-      dim => dataset%get_dim(iter%key)
-      ierr = NF90_INQ_DIMID(dataset%id, dim%name, dim%id)
-      call handle_error(ierr, 'Failed to get dimension ID of ' // trim(dim%name) // '! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-      call iter%next()
-    end do
-
-    call create_hash_table_iterator(dataset%vars, iter)
-    do while (.not. iter%ended())
-      var => dataset%get_var(iter%key)
-      ierr = NF90_INQ_VARID(dataset%id, var%name, var%id)
-      call handle_error(ierr, 'Failed to get variable ID of ' // trim(var%name) // '! ' // trim(NF90_STRERROR(ierr)), __FILE__, __LINE__)
-      call iter%next()
-    end do
-
-    if (present(new_file)) then
-      if (new_file) then
-        dataset%time_step = 0 ! Reset to zero!
-        dataset%last_file_path = file_path
-      end if
-    else
-      dataset%time_step = 0 ! Reset to zero!
-      dataset%last_file_path = file_path
-    end if
-
-  end subroutine apply_dataset_to_netcdf_slave
-
   subroutine fiona_output_0d(dataset_name, name, value)
 
     character(*), intent(in) :: dataset_name
@@ -754,16 +704,16 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
-    ! Let only root process to output scalar value.
-#ifdef HAS_MPI
-    if (dataset%proc_id /= 0) return
-#endif
-
     if (var%dims(1)%ptr%size == NF90_UNLIMITED) then
       start(1) = dataset%time_step
     else
       start(1) = 1
     end if
+
+#ifdef HAS_MPI
+    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+#endif
     select type (value)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, value, start)
@@ -809,6 +759,10 @@ contains
       end if
     end do
 
+#ifdef HAS_MPI
+    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+#endif
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
@@ -856,6 +810,10 @@ contains
       end if
     end do
 
+#ifdef HAS_MPI
+    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+#endif
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
@@ -901,6 +859,10 @@ contains
       end if
     end do
 
+#ifdef HAS_MPI
+    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+#endif
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
@@ -944,6 +906,10 @@ contains
       end if
     end do
 
+#ifdef HAS_MPI
+    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+#endif
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
@@ -987,6 +953,10 @@ contains
       end if
     end do
 
+#ifdef HAS_MPI
+    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+#endif
     select type (array)
     type is (integer)
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
@@ -1009,12 +979,6 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
 
     call dataset%close()
-
-#ifdef HAS_MPI
-    if (dataset%proc_id /= MPI_PROC_NULL .and. dataset%proc_id < dataset%num_proc - 1) then
-      call MPI_SEND(1, 1, MPI_INT, dataset%proc_id + 1, 0, dataset%mpi_comm, ierr)
-    end if
-#endif
 
   end subroutine fiona_end_output
 
@@ -1877,7 +1841,11 @@ contains
     integer ierr
 
     if (this%is_open()) call this%close()
-    ierr = NF90_OPEN(trim(this%file_path), NF90_NOWRITE + NF90_64BIT_OFFSET, this%id)
+#ifdef HAS_MPI
+    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, ior(NF90_NETCDF4, NF90_MPIIO)), this%id, comm=this%mpi_comm, info=MPI_INFO_NULL)
+#else
+    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_NETCDF4), this%id)
+#endif
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine dataset_open

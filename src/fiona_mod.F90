@@ -564,8 +564,10 @@ contains
         ! Update time units because restart may change it.
         write(dataset%time_var%units, '(A, " since ", A)') trim(dataset%time_units_str), trim(dataset%start_time_str)
 #ifdef HAS_MPI
-        ierr = NF90_VAR_PAR_ACCESS(dataset%id, dataset%time_var%id, NF90_COLLECTIVE)
-        call handle_error(ierr, 'Failed to set parallel access for variable time!', __FILE__, __LINE__)
+        if (dataset%mpi_comm /= MPI_COMM_NULL) then
+          ierr = NF90_VAR_PAR_ACCESS(dataset%id, dataset%time_var%id, NF90_COLLECTIVE)
+          call handle_error(ierr, 'Failed to set parallel access for variable time!', __FILE__, __LINE__)
+        end if
 #endif
         ierr = NF90_PUT_ATT(dataset%id, dataset%time_var%id, 'units', trim(dataset%time_var%units))
         call handle_error(ierr, 'Failed to add attribute to variable time!', __FILE__, __LINE__)
@@ -592,14 +594,22 @@ contains
     if (present(new_file)) then
       if (new_file) then
 #ifdef HAS_MPI
-        ierr = NF90_CREATE(file_path, ior(NF90_NETCDF4, NF90_MPIIO), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+        if (dataset%mpi_comm == MPI_COMM_NULL) then
+          ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
+        else
+          ierr = NF90_CREATE(file_path, ior(NF90_NETCDF4, NF90_MPIIO), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+        end if
 #else
         ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
 #endif
         call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
       else
 #ifdef HAS_MPI
-        ierr = NF90_OPEN(dataset%last_file_path, ior(NF90_NETCDF4, ior(NF90_WRITE, NF90_MPIIO)), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+        if (dataset%mpi_comm == MPI_COMM_NULL) then
+          ierr = NF90_OPEN(dataset%last_file_path, ior(NF90_NETCDF4, NF90_WRITE), dataset%id)
+        else
+          ierr = NF90_OPEN(dataset%last_file_path, ior(NF90_NETCDF4, ior(NF90_WRITE, NF90_MPIIO)), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+        end if
 #else
         ierr = NF90_OPEN(dataset%last_file_path, ior(NF90_NETCDF4, NF90_WRITE), dataset%id)
 #endif
@@ -609,7 +619,15 @@ contains
       end if
     else
 #ifdef HAS_MPI
-      ierr = NF90_CREATE(file_path, ior(NF90_NETCDF4, NF90_MPIIO), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+      if (dataset%mpi_comm == MPI_COMM_NULL) then
+        ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
+      else
+        ierr = NF90_CREATE(file_path, ior(NF90_NETCDF4, NF90_MPIIO), dataset%id, comm=dataset%mpi_comm, info=MPI_INFO_NULL)
+      end if
+      if (ierr == -114) then ! Parallel operation on file opened for non-parallel access
+        dataset%mpi_comm = MPI_COMM_NULL
+        ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
+      end if
 #else
       ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
 #endif
@@ -711,8 +729,10 @@ contains
     end if
 
 #ifdef HAS_MPI
-    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
-    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+      call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    end if
 #endif
     select type (value)
     type is (integer)
@@ -760,8 +780,10 @@ contains
     end do
 
 #ifdef HAS_MPI
-    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
-    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+      call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    end if
 #endif
     select type (array)
     type is (integer)
@@ -811,8 +833,10 @@ contains
     end do
 
 #ifdef HAS_MPI
-    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
-    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+      call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    end if
 #endif
     select type (array)
     type is (integer)
@@ -860,8 +884,10 @@ contains
     end do
 
 #ifdef HAS_MPI
-    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
-    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+      call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    end if
 #endif
     select type (array)
     type is (integer)
@@ -907,8 +933,10 @@ contains
     end do
 
 #ifdef HAS_MPI
-    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
-    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+      call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    end if
 #endif
     select type (array)
     type is (integer)
@@ -954,8 +982,10 @@ contains
     end do
 
 #ifdef HAS_MPI
-    ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
-    call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      ierr = NF90_VAR_PAR_ACCESS(dataset%id, var%id, NF90_COLLECTIVE)
+      call handle_error(ierr, 'Failed to set parallel access for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+    end if
 #endif
     select type (array)
     type is (integer)

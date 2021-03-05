@@ -299,7 +299,7 @@ contains
       end if
     end if
     ! Check unlimited dimension.
-    ierr = NF90_OPEN(dataset%file_path, ior(NF90_NETCDF4, NF90_NOWRITE), tmp_id)
+    ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE, tmp_id)
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
     call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1872,10 +1872,13 @@ contains
 
     if (this%is_open()) call this%close()
 #ifdef HAS_MPI
-    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, ior(NF90_NETCDF4, NF90_MPIIO)), this%id, comm=this%mpi_comm, info=MPI_INFO_NULL)
+    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_MPIIO), this%id, comm=this%mpi_comm, info=MPI_INFO_NULL)
 #else
-    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_NETCDF4), this%id)
+    ierr = NF90_OPEN(this%file_path, NF90_NOWRITE, this%id)
 #endif
+    if (ierr == -51) then ! Uknown file format error
+      ierr = NF90_OPEN(this%file_path, NF90_NOWRITE, this%id)
+    end if
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)
 
   end subroutine dataset_open

@@ -419,7 +419,7 @@ contains
     class(*), intent(in), optional :: missing_value
 
     type(dataset_type), pointer :: dataset
-    type(var_type) :: var
+    type(var_type), pointer :: var
     type(hash_table_iterator_type) iter
     type(dim_type), pointer :: dim
     integer i
@@ -431,6 +431,12 @@ contains
     if (dataset%vars%hashed(name)) then
       call log_error('Already added variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!')
     end if
+
+    ! There are pointers (missing_value) in var object, so we need to get the object inserted into hash table.
+    allocate(var)
+    call dataset%vars%insert(name, var)
+    deallocate(var)
+    var => dataset%get_var(name)
 
     var%name = name
     var%long_name = long_name
@@ -496,8 +502,6 @@ contains
         call log_error('Unknown dimension ' // trim(dim_names(i)) // ' for variable ' // trim(name) // '!', __FILE__, __LINE__)
       end if
     end do
-
-    call dataset%vars%insert(name, var)
 
     if (name == 'Time' .or. name == 'time') dataset%time_var => dataset%get_var(name)
 

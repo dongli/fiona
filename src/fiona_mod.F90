@@ -284,10 +284,10 @@ contains
 #ifdef HAS_MPI
     if (present(mpi_comm)) then
       dataset%mpi_comm = mpi_comm
+      call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
+      call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
       if (merge(parallel, .false., present(parallel))) then
         ! Partition the files to each process.
-        call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
-        call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
         n1 = size(file_paths) / dataset%num_proc
         n2 = mod(size(file_paths), dataset%num_proc)
         n3 = merge(n1 + 1, n1, dataset%proc_id < n2)
@@ -299,7 +299,7 @@ contains
       end if
     end if
     ! Check unlimited dimension.
-    ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE, tmp_id)
+    ierr = NF90_OPEN(dataset%file_path, ior(NF90_NOWRITE, NF90_64BIT_OFFSET), tmp_id)
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
     call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1842,12 +1842,16 @@ contains
 
     if (this%is_open()) call this%close()
 #ifdef HAS_MPI
-    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_MPIIO), this%id, comm=this%mpi_comm, info=MPI_INFO_NULL)
+    if (this%mpi_comm == MPI_COMM_NULL) then
+      ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_64BIT_OFFSET), this%id)
+    else
+      ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, ior(NF90_64BIT_OFFSET, NF90_MPIIO)), this%id, comm=this%mpi_comm, info=MPI_INFO_NULL)
+    end if
 #else
-    ierr = NF90_OPEN(this%file_path, NF90_NOWRITE, this%id)
+    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_64BIT_OFFSET), this%id)
 #endif
     if (ierr == -51) then ! Uknown file format error
-      ierr = NF90_OPEN(this%file_path, NF90_NOWRITE, this%id)
+      ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_64BIT_OFFSET), this%id)
     end if
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)
 

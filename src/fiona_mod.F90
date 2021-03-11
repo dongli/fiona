@@ -582,12 +582,11 @@ contains
 
   end subroutine fiona_start_output
 
-  subroutine apply_dataset_to_netcdf_master(file_path, dataset, new_file, append)
+  subroutine apply_dataset_to_netcdf_master(file_path, dataset, new_file)
 
     character(*), intent(in) :: file_path
     type(dataset_type), intent(inout) :: dataset
     logical, intent(in), optional :: new_file
-    logical, intent(in), optional :: append
 
     type(hash_table_iterator_type) iter
     type(dim_type), pointer :: dim

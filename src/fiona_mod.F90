@@ -53,6 +53,7 @@ module fiona_mod
     integer :: num_proc = 0
     integer :: mpi_comm = MPI_COMM_NULL
     integer :: proc_id  = MPI_PROC_NULL
+    logical :: split_group = .false.
 #endif
     ! Parallel input for serial files
     character(256), allocatable :: file_paths(:)
@@ -172,7 +173,7 @@ contains
 
   end subroutine fiona_init
 
-  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, start_time, time_units, mpi_comm)
+  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, start_time, time_units, mpi_comm, group_size)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in), optional :: desc
@@ -181,11 +182,12 @@ contains
     character(*), intent(in), optional :: start_time
     character(*), intent(in), optional :: time_units
     integer, intent(in), optional :: mpi_comm
+    integer, intent(in), optional :: group_size
 
     character(256) desc_, file_prefix_, file_path_
     type(dataset_type) dataset
     logical is_exist
-    integer ierr
+    integer ierr, color
 
     if (present(desc)) then
       desc_ = desc
@@ -220,9 +222,20 @@ contains
     dataset%mode = 'output'
 #ifdef HAS_MPI
     if (present(mpi_comm)) then
-      dataset%mpi_comm = mpi_comm
       call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
       call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
+      if (merge(group_size > 0, .false., present(group_size))) then
+        ! Split processes into small groups.
+        color = mod(dataset%proc_id, group_size)
+        call MPI_COMM_SPLIT(mpi_comm, color, dataset%proc_id, dataset%mpi_comm, ierr)
+        if (ierr /= 0) then
+          call log_error('Failed to create MPI groups!', __FILE__, __LINE__)
+        end if
+        dataset%split_group = .true.
+      else
+        dataset%mpi_comm = mpi_comm
+        dataset%split_group = .false.
+      end if
     end if
 #endif
 
@@ -605,6 +618,10 @@ contains
 #else
         ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
 #endif
+        if (ierr == -114) then
+          dataset%mpi_comm = MPI_COMM_NULL
+          ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
+        end if
         call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
       else
 #ifdef HAS_MPI
@@ -1948,7 +1965,10 @@ contains
 
     type(dataset_type), intent(inout) :: this
 
+    integer ierr
+
     if (allocated(this%file_paths)) deallocate(this%file_paths)
+    !if (this%split_group .and. this%mpi_comm /= MPI_COMM_NULL) call MPI_COMM_FREE(this%mpi_comm, ierr)
 
   end subroutine dataset_final
 

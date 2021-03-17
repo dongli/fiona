@@ -222,9 +222,10 @@ contains
     dataset%mode = 'output'
 #ifdef HAS_MPI
     if (present(mpi_comm)) then
-      call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
-      call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
-      if (merge(group_size > 0, .false., present(group_size))) then
+      dataset%mpi_comm = mpi_comm
+      if (mpi_comm /= MPI_COMM_NULL .and. merge(group_size > 1, .false., present(group_size))) then
+        call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
+        call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
         ! Split processes into small groups.
         color = mod(dataset%proc_id, group_size)
         call MPI_COMM_SPLIT(mpi_comm, color, dataset%proc_id, dataset%mpi_comm, ierr)
@@ -233,7 +234,6 @@ contains
         end if
         dataset%split_group = .true.
       else
-        dataset%mpi_comm = mpi_comm
         dataset%split_group = .false.
       end if
     end if
@@ -297,9 +297,9 @@ contains
 #ifdef HAS_MPI
     if (present(mpi_comm)) then
       dataset%mpi_comm = mpi_comm
-      call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
-      call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
-      if (merge(parallel, .false., present(parallel))) then
+      if (mpi_comm /= MPI_COMM_NULL .and. merge(parallel, .false., present(parallel))) then
+        call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
+        call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
         ! Partition the files to each process.
         n1 = size(file_paths) / dataset%num_proc
         n2 = mod(size(file_paths), dataset%num_proc)

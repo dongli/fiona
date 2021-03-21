@@ -53,7 +53,7 @@ module fiona_mod
     integer :: num_proc = 0
     integer :: mpi_comm = MPI_COMM_NULL
     integer :: proc_id  = MPI_PROC_NULL
-    logical :: split_group = .false.
+    integer :: group_id = -1
 #endif
     ! Parallel input for serial files
     character(256), allocatable :: file_paths(:)
@@ -187,7 +187,7 @@ contains
     character(256) desc_, file_prefix_, file_path_
     type(dataset_type) dataset
     logical is_exist
-    integer ierr, color
+    integer ierr
 
     if (present(desc)) then
       desc_ = desc
@@ -209,17 +209,6 @@ contains
       call log_error('Already created dataset ' // trim(dataset_name) // '!')
     end if
 
-    dataset%name = dataset_name
-    dataset%desc = desc_
-    call create_hash_table(table=dataset%atts)
-    call create_hash_table(table=dataset%dims)
-    call create_hash_table(table=dataset%vars)
-    if (file_prefix_ /= '' .and. file_path_ == '') then
-      dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name)
-    else if (file_prefix_ == '' .and. file_path_ /= '') then
-      dataset%file_path = file_path_
-    end if
-    dataset%mode = 'output'
 #ifdef HAS_MPI
     if (present(mpi_comm)) then
       dataset%mpi_comm = mpi_comm
@@ -229,17 +218,30 @@ contains
       end if
       if (mpi_comm /= MPI_COMM_NULL .and. merge(group_size > 1, .false., present(group_size))) then
         ! Split processes into small groups.
-        color = mod(dataset%proc_id, group_size)
-        call MPI_COMM_SPLIT(mpi_comm, color, dataset%proc_id, dataset%mpi_comm, ierr)
+        dataset%group_id = mod(dataset%proc_id, group_size)
+        call MPI_COMM_SPLIT(mpi_comm, dataset%group_id, dataset%proc_id, dataset%mpi_comm, ierr)
         if (ierr /= 0) then
           call log_error('Failed to create MPI groups!', __FILE__, __LINE__)
         end if
-        dataset%split_group = .true.
-      else
-        dataset%split_group = .false.
       end if
     end if
 #endif
+
+    dataset%name = dataset_name
+    dataset%desc = desc_
+    call create_hash_table(table=dataset%atts)
+    call create_hash_table(table=dataset%dims)
+    call create_hash_table(table=dataset%vars)
+    if (file_prefix_ /= '' .and. file_path_ == '') then
+      if (dataset%group_id /= -1) then
+        dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name) // '.g' // to_str(dataset%group_id, pad_zeros=3)
+      else
+        dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name)
+      end if
+    else if (file_prefix_ == '' .and. file_path_ /= '') then
+      dataset%file_path = file_path_
+    end if
+    dataset%mode = 'output'
 
     if (present(start_time) .and. present(time_units)) then
       select case (time_units)
@@ -1973,7 +1975,7 @@ contains
     integer ierr
 
     if (allocated(this%file_paths)) deallocate(this%file_paths)
-    !if (this%split_group .and. this%mpi_comm /= MPI_COMM_NULL) call MPI_COMM_FREE(this%mpi_comm, ierr)
+    !if (this%group_id /= -1 .and. this%mpi_comm /= MPI_COMM_NULL) call MPI_COMM_FREE(this%mpi_comm, ierr)
 
   end subroutine dataset_final
 

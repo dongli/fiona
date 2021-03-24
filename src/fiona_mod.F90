@@ -54,6 +54,7 @@ module fiona_mod
     integer :: mpi_comm = MPI_COMM_NULL
     integer :: proc_id  = MPI_PROC_NULL
     integer :: group_id = -1
+    logical :: split_file = .false.
 #endif
     ! Parallel input for serial files
     character(256), allocatable :: file_paths(:)
@@ -173,7 +174,7 @@ contains
 
   end subroutine fiona_init
 
-  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, start_time, time_units, mpi_comm, group_size)
+  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, start_time, time_units, mpi_comm, group_size, split_file)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in), optional :: desc
@@ -183,6 +184,7 @@ contains
     character(*), intent(in), optional :: time_units
     integer, intent(in), optional :: mpi_comm
     integer, intent(in), optional :: group_size
+    logical, intent(in), optional :: split_file
 
     character(256) desc_, file_prefix_, file_path_
     type(dataset_type) dataset
@@ -219,6 +221,7 @@ contains
       if (mpi_comm /= MPI_COMM_NULL .and. merge(group_size > 1, .false., present(group_size))) then
         ! Split processes into small groups.
         dataset%group_id = mod(dataset%proc_id, group_size)
+        if (present(split_file)) dataset%split_file = split_file
         call MPI_COMM_SPLIT(mpi_comm, dataset%group_id, dataset%proc_id, dataset%mpi_comm, ierr)
         if (ierr /= 0) then
           call log_error('Failed to create MPI groups!', __FILE__, __LINE__)
@@ -233,13 +236,17 @@ contains
     call create_hash_table(table=dataset%dims)
     call create_hash_table(table=dataset%vars)
     if (file_prefix_ /= '' .and. file_path_ == '') then
-      if (dataset%group_id /= -1) then
+      if (dataset%group_id /= -1 .and. dataset%split_file) then
         dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name) // '.g' // to_str(dataset%group_id, pad_zeros=3)
       else
         dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name)
       end if
     else if (file_prefix_ == '' .and. file_path_ /= '') then
-      dataset%file_path = file_path_
+      if (dataset%group_id /= -1 .and. dataset%split_file) then
+        dataset%file_path = replace_string(file_path_, '.nc', '') // '.g' // to_str(dataset%group_id, pad_zeros=3) // '.nc'
+      else
+        dataset%file_path = file_path_
+      end if
     end if
     dataset%mode = 'output'
 
@@ -614,6 +621,12 @@ contains
     integer i, ierr
     integer, allocatable :: dimids(:)
 
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
     if (present(new_file)) then
       if (new_file) then
 #ifdef HAS_MPI
@@ -749,6 +762,12 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
     if (var%dims(1)%ptr%size == NF90_UNLIMITED) then
       start(1) = dataset%time_step
     else
@@ -790,6 +809,12 @@ contains
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
+
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
 
     j = 1
     do i = 1, size(var%dims)
@@ -844,6 +869,12 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
     j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
@@ -895,6 +926,12 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
     j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
@@ -943,6 +980,12 @@ contains
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
+
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
 
     j = 1
     do i = 1, size(var%dims)
@@ -1034,6 +1077,17 @@ contains
     integer ierr
 
     dataset => get_dataset(dataset_name, mode='output')
+
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
+    ierr = NF90_SYNC(dataset%id)
+    if (ierr /= NF90_NOERR) then
+      call log_error('Failed to sync file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+    end if
 
     call dataset%close()
 

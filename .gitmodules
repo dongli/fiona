@@ -1,12 +1,12 @@
 [submodule "lib/container"]
 	path = lib/container
-	url = https://github.com/dongli/fortran-container
+	url = https://gitee.com/dongli85/fortran-container
 [submodule "lib/flogger"]
 	path = lib/flogger
-	url = https://github.com/dongli/flogger
+	url = https://gitee.com/dongli85/flogger
 [submodule "lib/string"]
 	path = lib/string
-	url = https://github.com/dongli/fortran-string
+	url = https://gitee.com/dongli85/fortran-string
 [submodule "lib/unit-test"]
 	path = lib/unit-test
-	url = https://github.com/dongli/fortran-unit-test
+	url = https://gitee.com/dongli85/fortran-unit-test

@@ -53,6 +53,8 @@ module fiona_mod
     integer :: num_proc = 0
     integer :: mpi_comm = MPI_COMM_NULL
     integer :: proc_id  = MPI_PROC_NULL
+    integer :: group_id = -1
+    logical :: split_file = .false.
 #endif
     ! Parallel input for serial files
     character(256), allocatable :: file_paths(:)
@@ -172,7 +174,7 @@ contains
 
   end subroutine fiona_init
 
-  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, start_time, time_units, mpi_comm)
+  subroutine fiona_create_dataset(dataset_name, desc, file_prefix, file_path, start_time, time_units, mpi_comm, group_size, split_file)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in), optional :: desc
@@ -181,6 +183,8 @@ contains
     character(*), intent(in), optional :: start_time
     character(*), intent(in), optional :: time_units
     integer, intent(in), optional :: mpi_comm
+    integer, intent(in), optional :: group_size
+    logical, intent(in), optional :: split_file
 
     character(256) desc_, file_prefix_, file_path_
     type(dataset_type) dataset
@@ -207,24 +211,44 @@ contains
       call log_error('Already created dataset ' // trim(dataset_name) // '!')
     end if
 
+#ifdef HAS_MPI
+    if (present(mpi_comm)) then
+      dataset%mpi_comm = mpi_comm
+      if (mpi_comm /= MPI_COMM_NULL) then
+        call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
+        call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
+      end if
+      if (mpi_comm /= MPI_COMM_NULL .and. merge(group_size > 1, .false., present(group_size))) then
+        ! Split processes into small groups.
+        dataset%group_id = mod(dataset%proc_id, group_size)
+        if (present(split_file)) dataset%split_file = split_file
+        call MPI_COMM_SPLIT(mpi_comm, dataset%group_id, dataset%proc_id, dataset%mpi_comm, ierr)
+        if (ierr /= 0) then
+          call log_error('Failed to create MPI groups!', __FILE__, __LINE__)
+        end if
+      end if
+    end if
+#endif
+
     dataset%name = dataset_name
     dataset%desc = desc_
     call create_hash_table(table=dataset%atts)
     call create_hash_table(table=dataset%dims)
     call create_hash_table(table=dataset%vars)
     if (file_prefix_ /= '' .and. file_path_ == '') then
-      dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name)
+      if (dataset%group_id /= -1 .and. dataset%split_file) then
+        dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name) // '.g' // to_str(dataset%group_id, pad_zeros=3)
+      else
+        dataset%file_prefix = trim(file_prefix_) // '.' // trim(dataset_name)
+      end if
     else if (file_prefix_ == '' .and. file_path_ /= '') then
-      dataset%file_path = file_path_
+      if (dataset%group_id /= -1 .and. dataset%split_file) then
+        dataset%file_path = replace_string(file_path_, '.nc', '') // '.g' // to_str(dataset%group_id, pad_zeros=3) // '.nc'
+      else
+        dataset%file_path = file_path_
+      end if
     end if
     dataset%mode = 'output'
-#ifdef HAS_MPI
-    if (present(mpi_comm)) then
-      dataset%mpi_comm = mpi_comm
-      call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
-      call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
-    end if
-#endif
 
     if (present(start_time) .and. present(time_units)) then
       select case (time_units)
@@ -239,6 +263,7 @@ contains
       case default
         call log_error('Invalid time_units ' // trim(time_units) // '!')
       end select
+      dataset%time_units_in_seconds = 3600.0d0
       dataset%start_time_str = start_time
       dataset%time_units_str = time_units
     else
@@ -284,10 +309,12 @@ contains
 #ifdef HAS_MPI
     if (present(mpi_comm)) then
       dataset%mpi_comm = mpi_comm
-      if (merge(parallel, .false., present(parallel))) then
-        ! Partition the files to each process.
+      if (mpi_comm /= MPI_COMM_NULL) then
         call MPI_COMM_SIZE(mpi_comm, dataset%num_proc, ierr)
         call MPI_COMM_RANK(mpi_comm, dataset%proc_id, ierr)
+      end if
+      if (mpi_comm /= MPI_COMM_NULL .and. merge(parallel, .false., present(parallel))) then
+        ! Partition the files to each process.
         n1 = size(file_paths) / dataset%num_proc
         n2 = mod(size(file_paths), dataset%num_proc)
         n3 = merge(n1 + 1, n1, dataset%proc_id < n2)
@@ -299,7 +326,7 @@ contains
       end if
     end if
     ! Check unlimited dimension.
-    ierr = NF90_OPEN(dataset%file_path, NF90_NOWRITE, tmp_id)
+    ierr = NF90_OPEN(dataset%file_path, ior(NF90_NOWRITE, NF90_NETCDF4), tmp_id)
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
     ierr = NF90_INQUIRE(tmp_id, unlimitedDimId=unlimited_dimid)
     call handle_error(ierr, 'Failed to inquire unlimited dimension ID in "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -582,18 +609,23 @@ contains
 
   end subroutine fiona_start_output
 
-  subroutine apply_dataset_to_netcdf_master(file_path, dataset, new_file, append)
+  subroutine apply_dataset_to_netcdf_master(file_path, dataset, new_file)
 
     character(*), intent(in) :: file_path
     type(dataset_type), intent(inout) :: dataset
     logical, intent(in), optional :: new_file
-    logical, intent(in), optional :: append
 
     type(hash_table_iterator_type) iter
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
     integer i, ierr
     integer, allocatable :: dimids(:)
+
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
 
     if (present(new_file)) then
       if (new_file) then
@@ -606,6 +638,10 @@ contains
 #else
         ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
 #endif
+        if (ierr == -114) then
+          dataset%mpi_comm = MPI_COMM_NULL
+          ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
+        end if
         call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)
       else
 #ifdef HAS_MPI
@@ -726,6 +762,12 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
     if (var%dims(1)%ptr%size == NF90_UNLIMITED) then
       start(1) = dataset%time_step
     else
@@ -767,6 +809,12 @@ contains
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
+
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
 
     j = 1
     do i = 1, size(var%dims)
@@ -821,6 +869,12 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
     j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
@@ -872,6 +926,12 @@ contains
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
 
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
     j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
@@ -920,6 +980,12 @@ contains
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
+
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
 
     j = 1
     do i = 1, size(var%dims)
@@ -1011,6 +1077,17 @@ contains
     integer ierr
 
     dataset => get_dataset(dataset_name, mode='output')
+
+#ifdef HAS_MPI
+    if (dataset%mpi_comm /= MPI_COMM_NULL) then
+      call MPI_BARRIER(dataset%mpi_comm, ierr)
+    end if
+#endif
+
+    ierr = NF90_SYNC(dataset%id)
+    if (ierr /= NF90_NOERR) then
+      call log_error('Failed to sync file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
+    end if
 
     call dataset%close()
 
@@ -1876,12 +1953,16 @@ contains
 
     if (this%is_open()) call this%close()
 #ifdef HAS_MPI
-    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_MPIIO), this%id, comm=this%mpi_comm, info=MPI_INFO_NULL)
+    if (this%mpi_comm == MPI_COMM_NULL) then
+      ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_NETCDF4), this%id)
+    else
+      ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, ior(NF90_NETCDF4, NF90_MPIIO)), this%id, comm=this%mpi_comm, info=MPI_INFO_NULL)
+    end if
 #else
-    ierr = NF90_OPEN(this%file_path, NF90_NOWRITE, this%id)
+    ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_NETCDF4), this%id)
 #endif
     if (ierr /= NF90_NOERR) then ! Fall back to serial read.
-      ierr = NF90_OPEN(this%file_path, NF90_NOWRITE, this%id)
+      ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_NETCDF4), this%id)
     end if
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)
 
@@ -1945,7 +2026,10 @@ contains
 
     type(dataset_type), intent(inout) :: this
 
+    integer ierr
+
     if (allocated(this%file_paths)) deallocate(this%file_paths)
+    !if (this%group_id /= -1 .and. this%mpi_comm /= MPI_COMM_NULL) call MPI_COMM_FREE(this%mpi_comm, ierr)
 
   end subroutine dataset_final
 

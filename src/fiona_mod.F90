@@ -1880,7 +1880,7 @@ contains
 #else
     ierr = NF90_OPEN(this%file_path, NF90_NOWRITE, this%id)
 #endif
-    if (ierr == -51) then ! Uknown file format error
+    if (ierr /= NF90_NOERR) then ! Fall back to serial read.
       ierr = NF90_OPEN(this%file_path, NF90_NOWRITE, this%id)
     end if
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)

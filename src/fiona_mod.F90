@@ -53,9 +53,9 @@ module fiona_mod
     integer :: num_proc = 0
     integer :: mpi_comm = MPI_COMM_NULL
     integer :: proc_id  = MPI_PROC_NULL
+#endif
     integer :: group_id = -1
     logical :: split_file = .false.
-#endif
     ! Parallel input for serial files
     character(256), allocatable :: file_paths(:)
     character(30) :: variant_dim = 'N/A'
@@ -639,7 +639,9 @@ contains
         ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
 #endif
         if (ierr == -114) then
+#ifdef HAS_MPI
           dataset%mpi_comm = MPI_COMM_NULL
+#endif
           ierr = NF90_CREATE(file_path, NF90_NETCDF4, dataset%id)
         end if
         call handle_error(ierr, 'Failed to create NetCDF file to output!', __FILE__, __LINE__)

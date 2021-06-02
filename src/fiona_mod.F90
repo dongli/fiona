@@ -1396,6 +1396,7 @@ contains
 
     type(dataset_type), pointer :: dataset
     real add_offset, scale_factor
+    logical no_add_offset, no_scale_factor
     integer ierr, varid, xtype
 
     dataset => get_dataset(dataset_name, mode='input')
@@ -1407,9 +1408,9 @@ contains
     ierr = NF90_INQUIRE_VARIABLE(dataset%id, varid, xtype=xtype)
     if (xtype == NF90_SHORT) then
       ierr = NF90_GET_ATT(dataset%id, varid, 'add_offset', add_offset)
-      call handle_error(ierr, 'No add_offset attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      no_add_offset = ierr /= NF90_NOERR
       ierr = NF90_GET_ATT(dataset%id, varid, 'scale_factor', scale_factor)
-      call handle_error(ierr, 'No scale_factor attribute for  "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
+      no_scale_factor = ierr /= NF90_NOERR
     end if
 
     select type (array)
@@ -1451,7 +1452,7 @@ contains
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
       end if
-      if (xtype == NF90_SHORT) then
+      if (xtype == NF90_SHORT .and. .not. no_add_offset .and. .not. no_scale_factor) then
         array = scale_factor * array + add_offset
       end if
     type is (real(8))
@@ -1473,7 +1474,7 @@ contains
           ierr = NF90_GET_VAR(dataset%id, varid, array)
         end if
       end if
-      if (xtype == NF90_SHORT) then
+      if (xtype == NF90_SHORT .and. .not. no_add_offset .and. .not. no_scale_factor) then
         array = scale_factor * array + add_offset
       end if
     class default
@@ -1963,7 +1964,7 @@ contains
 #else
     ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_NETCDF4), this%id)
 #endif
-    if (ierr /= NF90_NOERR) then ! Fall back to serial read.
+    if (ierr == -51) then ! Uknown file format error
       ierr = NF90_OPEN(this%file_path, ior(NF90_NOWRITE, NF90_NETCDF4), this%id)
     end if
     call handle_error(ierr, 'Failed to open NetCDF file "' // trim(this%file_path) // '"!', __FILE__, __LINE__)

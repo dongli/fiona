@@ -923,7 +923,7 @@ contains
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
     integer i, j, ierr
-    integer start_(4), count_(4)
+    integer, allocatable :: start_(:), count_(:)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
@@ -933,6 +933,9 @@ contains
       call MPI_BARRIER(dataset%mpi_comm, ierr)
     end if
 #endif
+
+    allocate(start_(size(var%dims)))
+    allocate(count_(size(var%dims)))
 
     j = 1
     do i = 1, size(var%dims)
@@ -965,6 +968,9 @@ contains
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
 
+    deallocate(start_)
+    deallocate(count_)
+
   end subroutine fiona_output_3d
 
   subroutine fiona_output_4d(dataset_name, name, array, start, count)
@@ -994,7 +1000,7 @@ contains
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
         start_(i) = dataset%time_step
         count_(i) = 1
-      else if (var%dims(i)%ptr%decomp .and. present(start) .and. present(count)) then
+      else if (present(start) .and. present(count)) then
         start_(i) = start(j)
         count_(i) = count(j)
         j = j + 1
@@ -1033,17 +1039,20 @@ contains
     type(dataset_type), pointer :: dataset
     type(var_type    ), pointer :: var
     integer i, j, ierr
-    integer start_(5), count_(5)
+    integer, allocatable :: start_(:), count_(:)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
+
+    allocate(start_(size(var%dims)))
+    allocate(count_(size(var%dims)))
 
     j = 1
     do i = 1, size(var%dims)
       if (var%dims(i)%ptr%size == NF90_UNLIMITED) then
         start_(i) = dataset%time_step
         count_(i) = 1
-      else if (var%dims(i)%ptr%decomp .and. present(start) .and. present(count)) then
+      else if (present(start) .and. present(count)) then
         start_(i) = start(j)
         count_(i) = count(j)
         j = j + 1
@@ -1068,6 +1077,9 @@ contains
       ierr = NF90_PUT_VAR(dataset%id, var%id, array, start_, count_)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
+
+    deallocate(start_)
+    deallocate(count_)
 
   end subroutine fiona_output_5d
 

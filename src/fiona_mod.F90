@@ -14,6 +14,7 @@ module fiona_mod
 
   public fiona_init
   public fiona_create_dataset
+  public fiona_has_dataset
   public fiona_open_dataset
   public fiona_add_att
   public fiona_add_dim
@@ -36,7 +37,6 @@ module fiona_mod
     character(256) :: author = 'N/A'
     character(256) :: file_path = 'N/A'
     character(256) :: file_prefix = 'N/A'
-    character(10) mode
     character(256) last_file_path
     type(var_type), pointer :: time_var => null()
     type(hash_table_type) atts
@@ -208,7 +208,7 @@ contains
     end if
 
     if (datasets%hashed(dataset_name)) then
-      call log_error('Already created dataset ' // trim(dataset_name) // '!')
+      call log_error('Already created dataset ' // trim(dataset_name) // '!', __FILE__, __LINE__)
     end if
 
 #ifdef HAS_MPI
@@ -248,7 +248,6 @@ contains
         dataset%file_path = file_path_
       end if
     end if
-    dataset%mode = 'output'
 
     if (present(start_time) .and. present(time_units)) then
       select case (time_units)
@@ -272,7 +271,7 @@ contains
       dataset%time_units_str = time_units_str
     end if
 
-    call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
+    call datasets%insert(trim(dataset%name), dataset)
 
   end subroutine fiona_create_dataset
 
@@ -289,14 +288,13 @@ contains
     integer ierr, tmp_id, unlimited_dimid, n1, n2, n3, i
 
     if (datasets%hashed(dataset_name)) then
-      call log_error('Already created dataset ' // trim(dataset_name) // '!')
+      call log_error('Already created dataset ' // trim(dataset_name) // '!', __FILE__, __LINE__)
     end if
 
     dataset%name = dataset_name
     call create_hash_table(table=dataset%atts)
     call create_hash_table(table=dataset%dims)
     call create_hash_table(table=dataset%vars)
-    dataset%mode = 'input'
     if (present(file_path)) then
       dataset%file_path = file_path
     else if (present(file_paths)) then
@@ -340,7 +338,7 @@ contains
     end if
 #endif
 
-    call datasets%insert(trim(dataset%name) // '.' // trim(dataset%mode), dataset)
+    call datasets%insert(trim(dataset%name), dataset)
 
   end subroutine fiona_open_dataset
 
@@ -352,7 +350,7 @@ contains
 
     type(dataset_type), pointer :: dataset
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
 
     call dataset%atts%insert(name, value)
 
@@ -371,10 +369,10 @@ contains
     type(dataset_type), pointer :: dataset
     type(dim_type) dim
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
 
     if (dataset%dims%hashed(name)) then
-      call log_error('Already added dimension ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!')
+      call log_error('Already added dimension ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
     end if
 
     dim%name = name
@@ -453,7 +451,7 @@ contains
     logical found
     real real
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
 
     if (dataset%vars%hashed(name)) then
       call log_error('Already added variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!')
@@ -542,10 +540,9 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr, varid
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
-    ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
-    res = ierr == NF90_NOERR
+    res = dataset%vars%hashed(var_name)
 
   end function fiona_has_var
 
@@ -566,7 +563,7 @@ contains
     integer status(MPI_STATUS_SIZE)
 #endif
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
 
     if (present(tag)) then
       if (dataset%file_path /= 'N/A') then
@@ -761,7 +758,7 @@ contains
     integer ierr
     integer start(1)
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
     var => dataset%get_var(name)
 
 #ifdef HAS_MPI
@@ -809,7 +806,7 @@ contains
     integer i, j, ierr
     integer start_(2), count_(2)
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
     var => dataset%get_var(name)
 
 #ifdef HAS_MPI
@@ -868,7 +865,7 @@ contains
     integer i, j, ierr
     integer, allocatable :: start_(:), count_(:)
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
     var => dataset%get_var(name)
 
 #ifdef HAS_MPI
@@ -931,7 +928,7 @@ contains
     integer i, j, ierr
     integer, allocatable :: start_(:), count_(:)
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
     var => dataset%get_var(name)
 
 #ifdef HAS_MPI
@@ -992,7 +989,7 @@ contains
     integer i, j, ierr
     integer start_(4), count_(4)
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
     var => dataset%get_var(name)
 
 #ifdef HAS_MPI
@@ -1047,7 +1044,7 @@ contains
     integer i, j, ierr
     integer, allocatable :: start_(:), count_(:)
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
     var => dataset%get_var(name)
 
     allocate(start_(size(var%dims)))
@@ -1096,7 +1093,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    dataset => get_dataset(dataset_name, mode='output')
+    dataset => get_dataset(dataset_name)
 
 #ifdef HAS_MPI
     if (dataset%mpi_comm /= MPI_COMM_NULL) then
@@ -1121,7 +1118,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     if (present(file_idx)) then
       dataset%file_path = dataset%file_paths(file_idx)
@@ -1142,8 +1139,7 @@ contains
     type(dim_type), pointer :: dim
     integer ierr, dimid
 
-    ! TODO: Try to refactor mode usage in dataset key.
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     if (dataset%dims%hashed(name)) then
       dim => dataset%get_dim(name)
@@ -1179,7 +1175,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
@@ -1200,7 +1196,7 @@ contains
     character(30) name
     integer num_att, i
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
     if (dataset%vars%hashed(var_name)) then
       var => dataset%get_var(var_name)
     else
@@ -1236,7 +1232,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
@@ -1252,7 +1248,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_GET_ATT(dataset%id, NF90_GLOBAL, att_name, value)
     call handle_error(ierr, 'Failed to get global attribute "' // trim(att_name) // '" from file ' // trim(dataset%file_path) // '!', __FILE__, __LINE__)
@@ -1268,7 +1264,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     call dataset%open()
 
@@ -1288,7 +1284,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     call dataset%open()
 
@@ -1307,7 +1303,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr, varid
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1349,7 +1345,7 @@ contains
     type(dataset_type), pointer :: dataset
     integer ierr, varid
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1417,7 +1413,7 @@ contains
     logical no_add_offset, no_scale_factor
     integer ierr, varid, xtype
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1515,7 +1511,7 @@ contains
     real add_offset, scale_factor
     integer ierr, varid, xtype
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1616,7 +1612,7 @@ contains
     real add_offset, scale_factor
     integer ierr, varid, xtype
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1717,7 +1713,7 @@ contains
     real add_offset, scale_factor
     integer ierr, varid, xtype
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     ierr = NF90_INQ_VARID(dataset%id, var_name, varid)
     call handle_error(ierr, 'No variable "' // trim(var_name) // '" in dataset "' // trim(dataset%file_path) // '"!', __FILE__, __LINE__)
@@ -1811,7 +1807,7 @@ contains
 
     type(dataset_type), pointer :: dataset
 
-    dataset => get_dataset(dataset_name, mode='input')
+    dataset => get_dataset(dataset_name)
 
     call dataset%close()
 
@@ -1851,8 +1847,8 @@ contains
       file_prefix_ = 'fiona'
     end if
 
-    if (datasets%hashed(trim(dataset_name) // '.output')) then
-      dataset => get_dataset(dataset_name, mode='output')
+    if (datasets%hashed(trim(dataset_name))) then
+      dataset => get_dataset(dataset_name)
       if (.not. dataset%dims%hashed(dim_names(1))) then
         call fiona_add_dim(dataset_name, dim_names(1), size=size(array, 1))
       end if
@@ -1913,8 +1909,8 @@ contains
       file_prefix_ = dataset_name
     end if
 
-    if (datasets%hashed(trim(dataset_name) // '.output')) then
-      dataset => get_dataset(dataset_name, mode='output')
+    if (datasets%hashed(trim(dataset_name))) then
+      dataset => get_dataset(dataset_name)
       do i = 1, 2
         if (.not. dataset%dims%hashed(dim_names(i))) then
           call fiona_add_dim(dataset_name, dim_names(i), size=size(array, i))
@@ -1944,24 +1940,24 @@ contains
 
   end subroutine fiona_quick_output_2d_r8
 
-  function get_dataset(dataset_name, mode) result(res)
+  logical function fiona_has_dataset(dataset_name) result(res)
+
+    character(*), intent(in)  :: dataset_name
+
+    res = datasets%hashed(trim(dataset_name))
+
+  end function fiona_has_dataset
+
+  function get_dataset(dataset_name) result(res)
 
     character(*), intent(in) :: dataset_name
-    character(*), intent(in), optional :: mode
     type(dataset_type), pointer :: res
 
-    character(30) mode_
-
-    if (present(mode)) then
-      mode_ = mode
-    else
-      mode_ = 'output'
-    end if
-    select type (value => datasets%value(trim(dataset_name) // '.' // trim(mode_)))
+    select type (value => datasets%value(trim(dataset_name)))
     type is (dataset_type)
       res => value
     class default
-      call log_error('Failed to get dataset ' // trim(dataset_name) // '.' // trim(mode_) // '!', __FILE__, __LINE__)
+      call log_error('Failed to get dataset ' // trim(dataset_name) // '!', __FILE__, __LINE__)
     end select
 
   end function get_dataset

@@ -866,7 +866,7 @@ contains
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
     integer i, j, ierr
-    integer start_(3), count_(3)
+    integer, allocatable :: start_(:), count_(:)
 
     dataset => get_dataset(dataset_name, mode='output')
     var => dataset%get_var(name)
@@ -876,6 +876,9 @@ contains
       call MPI_BARRIER(dataset%mpi_comm, ierr)
     end if
 #endif
+
+    allocate(start_(size(var%dims)))
+    allocate(count_(size(var%dims)))
 
     j = 1
     do i = 1, size(var%dims)
@@ -909,6 +912,9 @@ contains
       call log_error('Unsupported array type!', __FILE__, __LINE__)
     end select
     call handle_error(ierr, 'Failed to write variable ' // trim(name) // ' to ' // trim(dataset%name) // '!', __FILE__, __LINE__)
+
+    deallocate(start_)
+    deallocate(count_)
 
   end subroutine fiona_output_2d
 

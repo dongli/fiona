@@ -28,7 +28,6 @@ module fiona_mod
   public fiona_get_att
   public fiona_input
   public fiona_end_input
-  public fiona_quick_output
 
   type dataset_type
     integer :: id = -1
@@ -129,11 +128,6 @@ module fiona_mod
     module procedure fiona_input_5d
   end interface fiona_input
 
-  interface fiona_quick_output
-    module procedure fiona_quick_output_1d_r8
-    module procedure fiona_quick_output_2d_r8
-  end interface fiona_quick_output
-
   real(8) time_units_in_seconds
   character(30) :: time_units_str = 'N/A'
   character(30) :: start_time_str = 'N/A'
@@ -187,7 +181,7 @@ contains
     logical, intent(in), optional :: split_file
 
     character(256) desc_, file_prefix_, file_path_
-    type(dataset_type) dataset
+    type(dataset_type), pointer :: dataset
     logical is_exist
     integer ierr
 
@@ -208,7 +202,11 @@ contains
     end if
 
     if (datasets%hashed(dataset_name)) then
-      call log_error('Already created dataset ' // trim(dataset_name) // '!', __FILE__, __LINE__)
+      dataset => get_dataset(dataset_name)
+      is_exist = .true.
+    else
+      allocate(dataset)
+      is_exist = .false.
     end if
 
 #ifdef HAS_MPI
@@ -271,7 +269,7 @@ contains
       dataset%time_units_str = time_units_str
     end if
 
-    call datasets%insert(trim(dataset%name), dataset)
+    if (.not. is_exist) call datasets%insert(trim(dataset%name), dataset)
 
   end subroutine fiona_create_dataset
 
@@ -371,9 +369,7 @@ contains
 
     dataset => get_dataset(dataset_name)
 
-    if (dataset%dims%hashed(name)) then
-      call log_error('Already added dimension ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!', __FILE__, __LINE__)
-    end if
+    if (dataset%dims%hashed(name)) return
 
     dim%name = name
     if (.not. present(size)) then
@@ -453,9 +449,7 @@ contains
 
     dataset => get_dataset(dataset_name)
 
-    if (dataset%vars%hashed(name)) then
-      call log_error('Already added variable ' // trim(name) // ' in dataset ' // trim(dataset%name) // '!')
-    end if
+    if (dataset%vars%hashed(name)) return
 
     ! There are pointers (missing_value) in var object, so we need to get the object inserted into hash table.
     allocate(var)
@@ -1812,133 +1806,6 @@ contains
     call dataset%close()
 
   end subroutine fiona_end_input
-
-  subroutine fiona_quick_output_1d_r8(dataset_name, var_name, dim_names, array, long_name, units, file_prefix, time_in_seconds, new_file)
-
-    character(*), intent(in) :: dataset_name
-    character(*), intent(in) :: var_name
-    character(*), intent(in) :: dim_names(:)
-    real(8), intent(in) :: array(:)
-    character(*), intent(in), optional :: long_name
-    character(*), intent(in), optional :: units
-    character(*), intent(in), optional :: file_prefix
-    real(8), intent(in), optional :: time_in_seconds
-    logical, intent(in), optional :: new_file
-
-    type(dataset_type), pointer :: dataset
-    character(:), allocatable :: long_name_
-    character(:), allocatable :: units_
-    character(:), allocatable :: file_prefix_
-    logical new_file_
-
-    if (present(long_name)) then
-      long_name_ = long_name
-    else
-      long_name_ = var_name
-    end if
-    if (present(units)) then
-      units_ = units
-    else
-      units_ = ''
-    end if
-    if (present(file_prefix)) then
-      file_prefix_ = file_prefix
-    else
-      file_prefix_ = 'fiona'
-    end if
-
-    if (datasets%hashed(trim(dataset_name))) then
-      dataset => get_dataset(dataset_name)
-      if (.not. dataset%dims%hashed(dim_names(1))) then
-        call fiona_add_dim(dataset_name, dim_names(1), size=size(array, 1))
-      end if
-      if (.not. dataset%vars%hashed(var_name)) then
-        call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
-      end if
-      if (present(new_file)) then
-        new_file_ = new_file
-      else
-        new_file_ = .false.
-      end if
-    else
-      call fiona_create_dataset(dataset_name, 'Fiona quick output', file_prefix=file_prefix_)
-      if (present(time_in_seconds)) call fiona_add_dim(dataset_name, 'time', add_var=.true.)
-      call fiona_add_dim(dataset_name, dim_names(1), size=size(array, 1))
-      call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
-      new_file_ = .true.
-    end if
-
-    call fiona_start_output(dataset_name, time_in_seconds, new_file_)
-    call fiona_output(dataset_name, var_name, array)
-    call fiona_end_output(dataset_name)
-
-  end subroutine fiona_quick_output_1d_r8
-
-  subroutine fiona_quick_output_2d_r8(dataset_name, var_name, dim_names, array, long_name, units, file_prefix, time_in_seconds, new_file)
-
-    character(*), intent(in) :: dataset_name
-    character(*), intent(in) :: var_name
-    character(*), intent(in) :: dim_names(:)
-    real(8), intent(in) :: array(:,:)
-    character(*), intent(in), optional :: long_name
-    character(*), intent(in), optional :: units
-    character(*), intent(in), optional :: file_prefix
-    real(8), intent(in), optional :: time_in_seconds
-    logical, intent(in), optional :: new_file
-
-    type(dataset_type), pointer :: dataset
-    character(:), allocatable :: long_name_
-    character(:), allocatable :: units_
-    character(:), allocatable :: file_prefix_
-    logical new_file_
-    integer i
-
-    if (present(long_name)) then
-      long_name_ = long_name
-    else
-      long_name_ = var_name
-    end if
-    if (present(units)) then
-      units_ = units
-    else
-      units_ = ''
-    end if
-    if (present(file_prefix)) then
-      file_prefix_ = file_prefix
-    else
-      file_prefix_ = dataset_name
-    end if
-
-    if (datasets%hashed(trim(dataset_name))) then
-      dataset => get_dataset(dataset_name)
-      do i = 1, 2
-        if (.not. dataset%dims%hashed(dim_names(i))) then
-          call fiona_add_dim(dataset_name, dim_names(i), size=size(array, i))
-        end if
-      end do
-      if (.not. dataset%vars%hashed(var_name)) then
-        call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
-      end if
-      if (present(new_file)) then
-        new_file_ = new_file
-      else
-        new_file_ = .false.
-      end if
-    else
-      call fiona_create_dataset(dataset_name, 'Fiona quick output', file_prefix=file_prefix_)
-      if (present(time_in_seconds)) call fiona_add_dim(dataset_name, 'time', add_var=.true.)
-      do i = 1, 2
-        call fiona_add_dim(dataset_name, dim_names(i), size=size(array, i))
-      end do
-      call fiona_add_var(dataset_name, var_name, long_name_, units_, dim_names, data_type='real(8)')
-      new_file_ = .true.
-    end if
-
-    call fiona_start_output(dataset_name, time_in_seconds, new_file_)
-    call fiona_output(dataset_name, var_name, array)
-    call fiona_end_output(dataset_name)
-
-  end subroutine fiona_quick_output_2d_r8
 
   logical function fiona_has_dataset(dataset_name) result(res)
 

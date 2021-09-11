@@ -95,11 +95,17 @@ module fiona_mod
     real(4), pointer :: r4_missing_value => null()
     real(8), pointer :: r8_missing_value => null()
     type(var_dim_type), allocatable :: dims(:)
+    type(hash_table_type) atts
   contains
     final :: var_final
   end type var_type
 
   type(hash_table_type) datasets
+
+  interface fiona_add_att
+    module procedure fiona_add_att_1
+    module procedure fiona_add_att_2
+  end interface fiona_add_att
 
   interface fiona_output
     module procedure fiona_output_0d
@@ -340,7 +346,7 @@ contains
 
   end subroutine fiona_open_dataset
 
-  subroutine fiona_add_att(dataset_name, name, value)
+  subroutine fiona_add_att_1(dataset_name, name, value)
 
     character(*), intent(in) :: dataset_name
     character(*), intent(in) :: name
@@ -352,7 +358,24 @@ contains
 
     call dataset%atts%insert(name, value)
 
-  end subroutine fiona_add_att
+  end subroutine fiona_add_att_1
+
+  subroutine fiona_add_att_2(dataset_name, var_name, name, value)
+
+    character(*), intent(in) :: dataset_name
+    character(*), intent(in) :: var_name
+    character(*), intent(in) :: name
+    class(*), intent(in) :: value
+
+    type(dataset_type), pointer :: dataset
+    type(var_type), pointer :: var
+
+    dataset => get_dataset(dataset_name)
+    var => dataset%get_var(var_name)
+
+    call var%atts%insert(name, value)
+
+  end subroutine fiona_add_att_2
 
   subroutine fiona_add_dim(dataset_name, name, long_name, units, size, add_var, decomp)
 
@@ -441,7 +464,7 @@ contains
 
     type(dataset_type), pointer :: dataset
     type(var_type), pointer :: var
-    type(hash_table_iterator_type) iter
+    type(hash_table_iterator_type) it
     type(dim_type), pointer :: dim
     integer i
     logical found
@@ -507,15 +530,15 @@ contains
     allocate(var%dims(size(dim_names)))
     do i = 1, size(dim_names)
       found = .false.
-      call create_hash_table_iterator(dataset%dims, iter)
-      do while (.not. iter%ended())
-        dim => dataset%get_dim(iter%key)
+      call create_hash_table_iterator(dataset%dims, it)
+      do while (.not. it%ended())
+        dim => dataset%get_dim(it%key)
         if (dim%name == trim(dim_names(i))) then
           var%dims(i)%ptr => dim
           found = .true.
           exit
         end if
-        call iter%next()
+        call it%next()
       end do
       if (.not. found) then
         call log_error('Unknown dimension ' // trim(dim_names(i)) // ' for variable ' // trim(name) // '!', __FILE__, __LINE__)
@@ -523,6 +546,8 @@ contains
     end do
 
     if (name == 'Time' .or. name == 'time') dataset%time_var => dataset%get_var(name)
+
+    call create_hash_table(table=var%atts)
 
   end subroutine fiona_add_var
 
@@ -549,7 +574,7 @@ contains
 
     character(256) file_path
     type(dataset_type), pointer :: dataset
-    type(hash_table_iterator_type) iter
+    type(hash_table_iterator_type) it
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
     integer i, ierr
@@ -606,7 +631,7 @@ contains
     type(dataset_type), intent(inout) :: dataset
     logical, intent(in), optional :: new_file
 
-    type(hash_table_iterator_type) iter
+    type(hash_table_iterator_type) it1, it2
     type(dim_type), pointer :: dim
     type(var_type), pointer :: var
     integer i, ierr
@@ -670,37 +695,37 @@ contains
     ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'desc', dataset%desc)
     ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, 'author', dataset%author)
 
-    call create_hash_table_iterator(dataset%atts, iter)
-    do while (.not. iter%ended())
-      select type (value => iter%value)
+    it1 = hash_table_iterator(dataset%atts)
+    do while (.not. it1%ended())
+      select type (value => it1%value)
       type is (integer)
-        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, it1%key, value)
       type is (real(4))
-        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, it1%key, value)
       type is (real(8))
-        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, it1%key, value)
       type is (character(*))
-        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, value)
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, it1%key, value)
       type is (logical)
-        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, iter%key, to_str(value))
+        ierr = NF90_PUT_ATT(dataset%id, NF90_GLOBAL, it1%key, to_str(value))
       end select
-      call iter%next()
+      call it1%next()
     end do
 
-    call create_hash_table_iterator(dataset%dims, iter)
-    do while (.not. iter%ended())
-      dim => dataset%get_dim(iter%key)
+    it1 = hash_table_iterator(dataset%dims)
+    do while (.not. it1%ended())
+      dim => dataset%get_dim(it1%key)
       ierr = NF90_INQ_DIMID(dataset%id, dim%name, dim%id)
       if (ierr /= NF90_NOERR) then
         ierr = NF90_DEF_DIM(dataset%id, dim%name, dim%size, dim%id)
         call handle_error(ierr, 'Failed to define dimension ' // trim(dim%name) // '!', __FILE__, __LINE__)
       end if
-      call iter%next()
+      call it1%next()
     end do
 
-    call create_hash_table_iterator(dataset%vars, iter)
-    do while (.not. iter%ended())
-      var => dataset%get_var(iter%key)
+    it1 = hash_table_iterator(dataset%vars)
+    do while (.not. it1%ended())
+      var => dataset%get_var(it1%key)
       ierr = NF90_INQ_VARID(dataset%id, var%name, var%id)
       if (ierr /= NF90_NOERR) then
         allocate(dimids(size(var%dims)))
@@ -722,8 +747,16 @@ contains
           ierr = NF90_PUT_ATT(dataset%id, var%id, '_FillValue', var%r8_missing_value)
         end if
         call handle_error(ierr, 'Failed to put attribute _FillValue for variable ' // trim(var%name) // '!', __FILE__, __LINE__)
+        it2 = hash_table_iterator(var%atts)
+        do while (.not. it2%ended())
+          select type (value => it2%value)
+          type is (character(*))
+            ierr = NF90_PUT_ATT(dataset%id, var%id, it2%key, value)
+          end select
+          call it2%next()
+        end do
       end if
-      call iter%next()
+      call it1%next()
     end do
 
     ierr = NF90_ENDDEF(dataset%id)
